@@ -216,7 +216,9 @@ body {
   background: var(--bg);
   min-height: 100vh;
   overflow-y: auto;
+  overflow-x: hidden;
   max-width: calc(1200px + var(--sidebar-w));
+  min-width: 0;
 }
 
 .view { display: none; }
@@ -290,6 +292,7 @@ body {
    SECTION
 ══════════════════════════════════════ */
 .dashboard-grid { display: grid; gap: 28px; width: 100%; min-width: 0; }
+.dashboard-section { min-width: 0; width: 100%; }
 
 .section-title {
   font-family: var(--pixel);
@@ -576,6 +579,8 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 14px;
+  width: 100%;
+  min-width: 0;
 }
 
 /* Recommendation card — slimmer than main card */
