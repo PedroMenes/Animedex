@@ -67,45 +67,126 @@ async function jikanFetch(url, retries = 3, delayMs = 1500) {
   }
 }
 
-// ── AniList fallback (para busca quando Jikan/MAL está fora) ──
-async function anilistSearch(query) {
-  const gql = `query ($search: String) {
-    Page(perPage: 20) {
-      media(search: $search, type: ANIME, sort: SCORE_DESC) {
+// ── AniList fallback ──────────────────────────────────────────
+
+// Mapeamento Jikan genre ID → nome AniList
+const JIKAN_GENRE_TO_ANILIST = {
+  1:  'Action',
+  2:  'Adventure',
+  4:  'Comedy',
+  8:  'Drama',
+  10: 'Fantasy',
+  14: 'Horror',
+  7:  'Mystery',
+  22: 'Romance',
+  24: 'Sci-Fi',
+  36: 'Slice of Life',
+  30: 'Sports',
+  37: 'Supernatural',
+  41: 'Thriller',
+};
+
+function mapAnilistMedia(media) {
+  return media.map(a => ({
+    mal_id:   a.idMal || a.id,
+    title:    a.title.english || a.title.romaji,
+    title_japanese: a.title.romaji,
+    images:   { jpg: { image_url: a.coverImage.large, large_image_url: a.coverImage.large } },
+    episodes: a.episodes,
+    score:    a.averageScore ? +(a.averageScore / 10).toFixed(2) : null,
+    synopsis: a.description ? a.description.replace(/<[^>]*>/g, '') : null,
+    genres:   (a.genres || []).map(g => ({ name: g })),
+    duration: a.duration ? `${a.duration} min per ep` : null,
+    status:   a.status,
+    _source:  'anilist',
+  }));
+}
+
+async function anilistFetch(variables, extraFilter = '') {
+  const gql = `query ($page: Int, $perPage: Int${extraFilter ? ', $genre: String, $search: String' : ', $search: String'}) {
+    Page(page: $page, perPage: $perPage) {
+      pageInfo { hasNextPage }
+      media(type: ANIME, sort: SCORE_DESC${extraFilter}
+        ${Object.keys(variables).includes('search') ? ', search: $search' : ''}
+      ) {
         idMal id
         title { romaji english }
         coverImage { large }
         episodes averageScore
         description(asHtml: false)
-        genres duration
-        status
+        genres duration status
       }
     }
   }`;
   const res = await fetch('https://graphql.anilist.co', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: gql, variables: { search: query } }),
+    body: JSON.stringify({ query: gql, variables }),
     signal: AbortSignal.timeout(12000),
   });
   if (!res.ok) throw new Error(`AniList ${res.status}`);
   const json = await res.json();
-  const media = json.data?.Page?.media || [];
-  // Mapeia para formato compatível com Jikan
+  if (json.errors) throw new Error(json.errors[0]?.message || 'AniList GraphQL error');
+  return json.data?.Page;
+}
+
+async function anilistByGenre(genreId, page = 1) {
+  const genreName = JIKAN_GENRE_TO_ANILIST[genreId];
+  if (!genreName) throw new Error(`Gênero ${genreId} sem mapeamento AniList`);
+
+  const gql = `query ($genre: String, $page: Int, $perPage: Int) {
+    Page(page: $page, perPage: $perPage) {
+      pageInfo { hasNextPage }
+      media(type: ANIME, genre: $genre, sort: SCORE_DESC) {
+        idMal id
+        title { romaji english }
+        coverImage { large }
+        episodes averageScore
+        description(asHtml: false)
+        genres duration status
+      }
+    }
+  }`;
+  const res = await fetch('https://graphql.anilist.co', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: gql, variables: { genre: genreName, page, perPage: 12 } }),
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`AniList ${res.status}`);
+  const json = await res.json();
+  if (json.errors) throw new Error(json.errors[0]?.message || 'AniList error');
+  const pageData = json.data?.Page;
   return {
-    data: media.map(a => ({
-      mal_id: a.idMal || a.id,
-      title: a.title.english || a.title.romaji,
-      title_japanese: a.title.romaji,
-      images: { jpg: { image_url: a.coverImage.large, large_image_url: a.coverImage.large } },
-      episodes: a.episodes,
-      score: a.averageScore ? +(a.averageScore / 10).toFixed(2) : null,
-      synopsis: a.description ? a.description.replace(/<[^>]*>/g, '') : null,
-      genres: (a.genres || []).map(g => ({ name: g })),
-      duration: a.duration ? `${a.duration} min per ep` : null,
-      status: a.status,
-      _source: 'anilist',
-    })),
+    data: mapAnilistMedia(pageData?.media || []),
+    pagination: { has_next_page: pageData?.pageInfo?.hasNextPage ?? false },
+  };
+}
+
+async function anilistSearch(query) {
+  const gql = `query ($search: String, $perPage: Int) {
+    Page(perPage: $perPage) {
+      media(search: $search, type: ANIME, sort: SCORE_DESC) {
+        idMal id
+        title { romaji english }
+        coverImage { large }
+        episodes averageScore
+        description(asHtml: false)
+        genres duration status
+      }
+    }
+  }`;
+  const res = await fetch('https://graphql.anilist.co', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: gql, variables: { search: query, perPage: 20 } }),
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`AniList ${res.status}`);
+  const json = await res.json();
+  if (json.errors) throw new Error(json.errors[0]?.message || 'AniList error');
+  return {
+    data: mapAnilistMedia(json.data?.Page?.media || []),
     pagination: { has_next_page: false },
   };
 }
@@ -120,19 +201,33 @@ app.get('/api/jikan', async (req, res) => {
     const data = await jikanFetch(`${JIKAN}${jikanPath}`);
     return res.json(data);
   } catch (err) {
-    console.warn('[jikan] falhou, verificando fallback…', err.message);
+    console.warn('[jikan] falhou, tentando AniList…', err.message);
   }
 
-  // Fallback AniList apenas para buscas por query
-  const urlObj = new URL(jikanPath, 'http://x');
-  const q = urlObj.searchParams.get('q');
+  // Fallback AniList
+  const urlObj    = new URL(jikanPath, 'http://x');
+  const q         = urlObj.searchParams.get('q');
+  const genreIds  = urlObj.searchParams.get('genres');
+  const page      = parseInt(urlObj.searchParams.get('page') || '1', 10);
+
+  // Busca por query
   if (q) {
     try {
       console.log('[anilist] fallback search:', q);
-      const data = await anilistSearch(q);
-      return res.json(data);
+      return res.json(await anilistSearch(q));
     } catch (err2) {
-      console.warn('[anilist] fallback falhou:', err2.message);
+      console.warn('[anilist] search falhou:', err2.message);
+    }
+  }
+
+  // Busca por gênero (recomendações)
+  if (genreIds) {
+    const firstGenre = parseInt(genreIds.split(',')[0], 10);
+    try {
+      console.log('[anilist] fallback genre:', firstGenre, 'page:', page);
+      return res.json(await anilistByGenre(firstGenre, page));
+    } catch (err2) {
+      console.warn('[anilist] genre falhou:', err2.message);
     }
   }
 
