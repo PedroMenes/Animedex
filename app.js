@@ -33,16 +33,18 @@ async function apiDelete(malId) {
 // Inicia com cache local para exibição imediata
 let myList = cacheGet();
 
-// ── Jikan API ─────────────────────────────────────────────────
-const JIKAN = 'https://api.jikan.moe/v4';
-
-async function searchAnime(query) {
-  const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`);
+// ── Jikan via proxy local ─────────────────────────────────────
+async function jikan(path) {
+  const res = await fetch(`${API_BASE}/jikan?path=${encodeURIComponent(path)}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Erro na busca');
+    throw new Error(err.error || 'Erro na API');
   }
-  const json = await res.json();
+  return res.json();
+}
+
+async function searchAnime(query) {
+  const json = await jikan(`/anime?q=${encodeURIComponent(query)}&limit=20&sfw=true`);
   return json.data || [];
 }
 
@@ -615,10 +617,7 @@ async function fetchRecommendations(append = false) {
   }
 
   try {
-    const url = `${JIKAN}/anime?genres=${activeGenreId}&order_by=score&sort=desc&limit=12&page=${recoPage}&sfw=true`;
-    const res  = await fetch(url);
-    if (!res.ok) throw new Error();
-    const json = await res.json();
+    const json = await jikan(`/anime?genres=${activeGenreId}&order_by=score&sort=desc&limit=12&page=${recoPage}&sfw=true`);
     const hasNext = json.pagination?.has_next_page ?? false;
     appendRecommendations(json.data || [], hasNext, append);
   } catch {
@@ -835,9 +834,7 @@ async function loadSeasonCalendar() {
   const loading = document.getElementById('season-loading');
   const daysEl  = document.getElementById('season-days');
   try {
-    const res  = await fetch(`${JIKAN}/seasons/now?limit=25`);
-    if (!res.ok) throw new Error();
-    const json = await res.json();
+    const json = await jikan(`/seasons/now?limit=25`);
     const list = json.data || [];
 
     const grouped = {};
