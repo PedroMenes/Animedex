@@ -25,6 +25,40 @@ function writeDB(list) {
 app.use(express.json());
 app.use(express.static(__dirname));
 
+// ── Jikan proxy (evita timeout e rate-limit no browser) ───────
+const JIKAN = 'https://api.jikan.moe/v4';
+
+async function jikanFetch(url, retries = 3, delayMs = 1200) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (res.status === 429 || res.status >= 500) {
+        if (i < retries - 1) { await new Promise(r => setTimeout(r, delayMs * (i + 1))); continue; }
+        throw new Error(`Jikan ${res.status}`);
+      }
+      return res.json();
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      await new Promise(r => setTimeout(r, delayMs * (i + 1)));
+    }
+  }
+}
+
+// GET /api/search?q=...
+app.get('/api/search', async (req, res) => {
+  const q = req.query.q?.trim();
+  if (!q) return res.status(400).json({ error: 'query required' });
+  try {
+    const data = await jikanFetch(`${JIKAN}/anime?q=${encodeURIComponent(q)}&limit=20&sfw=true`);
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({ error: 'Jikan indisponível. Tente novamente.' });
+  }
+});
+
 // ── API ───────────────────────────────────────────────────────
 
 // GET all entries

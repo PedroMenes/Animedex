@@ -37,8 +37,11 @@ let myList = cacheGet();
 const JIKAN = 'https://api.jikan.moe/v4';
 
 async function searchAnime(query) {
-  const res = await fetch(`${JIKAN}/anime?q=${encodeURIComponent(query)}&limit=20&sfw=true`);
-  if (!res.ok) throw new Error('Erro na busca');
+  const res = await fetch(`${API_BASE}/search?q=${encodeURIComponent(query)}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Erro na busca');
+  }
   const json = await res.json();
   return json.data || [];
 }
