@@ -24,7 +24,21 @@
 ## 🚀 Como rodar
 
 ### Pré-requisitos
-- [Node.js](https://nodejs.org/) v18 ou superior
+
+| Requisito | Versão mínima | Link |
+|-----------|--------------|------|
+| [Node.js](https://nodejs.org/) | v18+ | https://nodejs.org |
+| npm | v8+ *(incluso no Node.js)* | — |
+
+> Verifique com: `node -v` e `npm -v`
+
+### Dependências
+
+| Pacote | Versão | Função |
+|--------|--------|--------|
+| [express](https://expressjs.com/) | ^4.19.2 | Servidor HTTP + API REST |
+
+> As APIs externas [Jikan v4](https://jikan.moe/) e [AniList GraphQL](https://anilist.gitbook.io/anilist-apiv2-docs/) são usadas para busca e recomendações — **sem necessidade de chave de API**. O AniList atua automaticamente como fallback caso o Jikan/MAL esteja indisponível.
 
 ### Instalação
 
@@ -83,8 +97,9 @@ Animedex/
 ## 🛠️ Tecnologias
 
 - **Frontend:** HTML5, CSS3 (Custom Properties), JavaScript ES2022
-- **Backend:** Node.js, Express
-- **API:** [Jikan v4](https://docs.api.jikan.moe/) — wrapper não oficial do MyAnimeList
+- **Backend:** Node.js + Express (proxy com cache em memória e retry automático)
+- **API primária:** [Jikan v4](https://docs.api.jikan.moe/) — wrapper não oficial do MyAnimeList
+- **API fallback:** [AniList GraphQL](https://anilist.gitbook.io/anilist-apiv2-docs/) — ativado automaticamente quando Jikan/MAL está fora
 - **Fonte:** [Press Start 2P](https://fonts.google.com/specimen/Press+Start+2P) (pixel art)
 - **Persistência:** JSON file com escrita atômica
 
