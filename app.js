@@ -1,8 +1,7 @@
 // ── Storage ──────────────────────────────────────────────────
 const STORAGE_KEY = 'myanimelist_data';
-const API_BASE    = '/api';
 
-// localStorage — cache rápido para renderização imediata
+// localStorage — única fonte de dados (sem servidor)
 function cacheGet() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
   catch { return []; }
@@ -11,31 +10,14 @@ function cacheSet(list) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
 }
 
-// API REST — banco de dados persistente no servidor
-async function apiLoad() {
-  const res = await fetch(`${API_BASE}/list`);
-  if (!res.ok) throw new Error('falha ao carregar');
-  return res.json();
-}
-async function apiSave(entry) {
-  const res = await fetch(`${API_BASE}/list`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(entry),
-  });
-  if (!res.ok) throw new Error('falha ao salvar');
-}
-async function apiDelete(malId) {
-  const res = await fetch(`${API_BASE}/list/${malId}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error('falha ao deletar');
-}
-
-// Inicia com cache local para exibição imediata
+// Inicia com dados do localStorage
 let myList = cacheGet();
 
-// ── Jikan via proxy local ─────────────────────────────────────
+// ── Jikan direto (sem proxy) ──────────────────────────────────
+const JIKAN_BASE = 'https://api.jikan.moe/v4';
+
 async function jikan(path) {
-  const res = await fetch(`${API_BASE}/jikan?path=${encodeURIComponent(path)}`);
+  const res = await fetch(`${JIKAN_BASE}${path}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Erro na API');
@@ -111,7 +93,6 @@ const STATUS_TYPES = {
   dropped:       { label: 'DARK',    css: 'type-dark' },
 };
 
-// Portuguese labels for filters/modal
 const STATUS_LABELS = {
   watching:     'Assistindo',
   completed:    'Completo',
@@ -407,14 +388,12 @@ function populateModal(data, entry) {
     btnRemove.style.display = 'none';
   }
 
-  // Category scores
   const cats = ['story','animation','characters','soundtrack'];
   cats.forEach(c => {
     document.getElementById(`score-${c}`).value = scores[c] || 0;
     document.getElementById(`val-${c}`).textContent = scores[c] > 0 ? scores[c] : '—';
   });
 
-  // Episode tracker grid
   const totalEps = data.episodes || 0;
   const trackerWrap = document.getElementById('ep-tracker-wrap');
   const epGrid = document.getElementById('ep-grid');
@@ -448,7 +427,6 @@ function updateScoreDisplay() {
 
 scoreSlider.addEventListener('input', updateScoreDisplay);
 
-// Category score sliders → auto-update main score
 ['story','animation','characters','soundtrack'].forEach(c => {
   document.getElementById(`score-${c}`).addEventListener('input', function() {
     const v = +this.value;
@@ -468,7 +446,7 @@ modalClose.addEventListener('click', closeModal);
 overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
 function closeModal() { overlay.style.display = 'none'; }
 
-// Save
+// Save — apenas localStorage
 modalForm.addEventListener('submit', e => {
   e.preventDefault();
   const malId    = +document.getElementById('form-mal-id').value;
@@ -485,7 +463,7 @@ modalForm.addEventListener('submit', e => {
     characters: +document.getElementById('score-characters').value,
     soundtrack: +document.getElementById('score-soundtrack').value,
   };
-  // Episode log: collect watched episodes from grid
+
   const prevEntry   = myList.find(e => e.malId === malId);
   const prevLog     = prevEntry?.episodeLog || [];
   const watchedBtns = document.querySelectorAll('#ep-grid .ep-btn.watched');
@@ -496,6 +474,7 @@ modalForm.addEventListener('submit', e => {
       .filter(n => !prevLog.some(e => e.num === n))
       .map(n => ({ num: n, watchedAt: Date.now() })),
   ].sort((a,b) => a.num - b.num);
+
   const status   = modalForm.querySelector('input[name="status"]:checked')?.value || 'plan_to_watch';
   const userScore= +scoreSlider.value;
   const epWatched= +document.getElementById('form-ep-watched').value;
@@ -521,9 +500,7 @@ modalForm.addEventListener('submit', e => {
 
   cacheSet(myList);
   closeModal();
-  apiSave(entry)
-    .then(() => toast(isUpdate ? 'Lista atualizada!' : 'Anime adicionado!', 'success'))
-    .catch(() => toast('Salvo localmente — erro no banco', 'error'));
+  toast(isUpdate ? 'Lista atualizada!' : 'Anime adicionado!', 'success');
   updateStats();
   refreshSearchButtons();
 
@@ -532,7 +509,7 @@ modalForm.addEventListener('submit', e => {
   if (activeView === 'view-list') renderList();
 });
 
-// Remove
+// Remove — apenas localStorage
 btnRemove.addEventListener('click', () => {
   const malId = +document.getElementById('form-mal-id').value;
   myList = myList.filter(e => e.malId !== malId);
@@ -540,16 +517,13 @@ btnRemove.addEventListener('click', () => {
   closeModal();
   updateStats();
   refreshSearchButtons();
-  apiDelete(malId)
-    .then(() => toast('Anime removido', ''))
-    .catch(() => toast('Removido localmente — erro no banco', 'error'));
+  toast('Anime removido', '');
 
   const activeView = document.querySelector('.view.active')?.id;
   if (activeView === 'view-dashboard') renderDashboard();
   if (activeView === 'view-list') renderList();
 });
 
-// Refresh "Na lista" buttons in search results after add/remove
 function refreshSearchButtons() {
   document.querySelectorAll('.result-card').forEach(card => {
     const malId  = +card.dataset.malId;
@@ -708,7 +682,6 @@ function appendRecommendations(results, hasNext, append) {
   }
 }
 
-// Refresh reco buttons after add/remove (in addition to search buttons)
 const _origRefresh = refreshSearchButtons;
 refreshSearchButtons = function() {
   _origRefresh();
@@ -736,7 +709,6 @@ function renderStats() {
   document.getElementById('stat-total').textContent  = myList.length;
   document.getElementById('stat-avg').textContent    = avg;
 
-  // Status breakdown
   const statusCounts = {
     'Assistindo': myList.filter(e=>e.status==='watching').length,
     'Completo':   myList.filter(e=>e.status==='completed').length,
@@ -753,7 +725,6 @@ function renderStats() {
       <span class="h-bar-val">${count}</span>
     </div>`).join('');
 
-  // Genre distribution
   const genreMap = {};
   myList.forEach(e => (e.genres || []).forEach(g => { genreMap[g] = (genreMap[g]||0)+1; }));
   const topGenres = Object.entries(genreMap).sort((a,b)=>b[1]-a[1]).slice(0,8);
@@ -767,7 +738,6 @@ function renderStats() {
         </div>`).join('')
     : '<div class="empty-chart">Adicione animes para ver gêneros</div>';
 
-  // Score histogram (1–10)
   const scoreBuckets = Array.from({length:10}, (_,i) => myList.filter(e=>e.userScore===i+1).length);
   const scoreMax = Math.max(...scoreBuckets, 1);
   document.getElementById('chart-scores').innerHTML = `<div class="score-hist">${
@@ -778,7 +748,6 @@ function renderStats() {
       </div>`).join('')
   }</div>`;
 
-  // Monthly activity (last 6 months from episodeLog)
   const now = new Date();
   const months = Array.from({length:6}, (_,i) => {
     const d = new Date(now.getFullYear(), now.getMonth()-5+i, 1);
@@ -798,7 +767,6 @@ function renderStats() {
       <span class="month-label">${m.label}</span>
     </div>`).join('');
 
-  // Top 5 rated
   const top5 = [...myList].filter(e=>e.userScore>0).sort((a,b)=>b.userScore-a.userScore).slice(0,5);
   const catColors = ['#F08030','#78C850','#6890F0','#F85888'];
   document.getElementById('chart-top5').innerHTML = top5.length
@@ -879,22 +847,8 @@ async function loadSeasonCalendar() {
 }
 
 // ── Init ──────────────────────────────────────────────────────
-async function init() {
-  try {
-    const dbList = await apiLoad();
-
-    if (dbList.length === 0 && myList.length > 0) {
-      // Migra dados do localStorage para o banco
-      for (const entry of myList) await apiSave(entry);
-      toast('Lista migrada para o banco de dados!', 'success');
-    } else {
-      myList = dbList;
-      cacheSet(myList);
-    }
-  } catch {
-    // Servidor indisponível — continua com cache local silenciosamente
-  }
-
+function init() {
+  // Dados já carregados do localStorage no topo do arquivo
   renderDashboard();
   initGenrePills();
   loadSeasonCalendar();
