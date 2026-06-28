@@ -1,7 +1,8 @@
 // ── Storage ──────────────────────────────────────────────────
 const STORAGE_KEY = 'myanimelist_data';
+const API_BASE    = '/api';
 
-// localStorage — única fonte de dados (sem servidor)
+// localStorage — cache rápido para renderização imediata
 function cacheGet() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
   catch { return []; }
@@ -10,14 +11,31 @@ function cacheSet(list) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
 }
 
-// Inicia com dados do localStorage
+// API REST — banco de dados persistente no servidor
+async function apiLoad() {
+  const res = await fetch(`${API_BASE}/list`);
+  if (!res.ok) throw new Error('falha ao carregar');
+  return res.json();
+}
+async function apiSave(entry) {
+  const res = await fetch(`${API_BASE}/list`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(entry),
+  });
+  if (!res.ok) throw new Error('falha ao salvar');
+}
+async function apiDelete(malId) {
+  const res = await fetch(`${API_BASE}/list/${malId}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('falha ao deletar');
+}
+
+// Inicia com cache local para exibição imediata
 let myList = cacheGet();
 
-// ── Jikan direto (sem proxy) ──────────────────────────────────
-const JIKAN_BASE = 'https://api.jikan.moe/v4';
-
+// ── Jikan via proxy local ─────────────────────────────────────
 async function jikan(path) {
-  const res = await fetch(`${JIKAN_BASE}${path}`);
+  const res = await fetch(`${API_BASE}/jikan?path=${encodeURIComponent(path)}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Erro na API');
@@ -500,7 +518,9 @@ modalForm.addEventListener('submit', e => {
 
   cacheSet(myList);
   closeModal();
-  toast(isUpdate ? 'Lista atualizada!' : 'Anime adicionado!', 'success');
+  apiSave(entry)
+    .then(() => toast(isUpdate ? 'Lista atualizada!' : 'Anime adicionado!', 'success'))
+    .catch(() => toast('Salvo localmente — erro no banco', 'error'));
   updateStats();
   refreshSearchButtons();
 
@@ -509,7 +529,7 @@ modalForm.addEventListener('submit', e => {
   if (activeView === 'view-list') renderList();
 });
 
-// Remove — apenas localStorage
+// Remove
 btnRemove.addEventListener('click', () => {
   const malId = +document.getElementById('form-mal-id').value;
   myList = myList.filter(e => e.malId !== malId);
@@ -517,7 +537,9 @@ btnRemove.addEventListener('click', () => {
   closeModal();
   updateStats();
   refreshSearchButtons();
-  toast('Anime removido', '');
+  apiDelete(malId)
+    .then(() => toast('Anime removido', ''))
+    .catch(() => toast('Removido localmente — erro no banco', 'error'));
 
   const activeView = document.querySelector('.view.active')?.id;
   if (activeView === 'view-dashboard') renderDashboard();
@@ -846,12 +868,133 @@ async function loadSeasonCalendar() {
   }
 }
 
+// ── Auth ──────────────────────────────────────────────────────
+const authScreen  = document.getElementById('auth-screen');
+const formLogin   = document.getElementById('form-login');
+const formReg     = document.getElementById('form-register');
+const tabLogin    = document.getElementById('tab-login');
+const tabReg      = document.getElementById('tab-register');
+const loginErr    = document.getElementById('login-error');
+const regErr      = document.getElementById('reg-error');
+
+function showAuthScreen() {
+  authScreen.style.display = 'flex';
+  document.getElementById('login-username').focus();
+}
+
+function hideAuthScreen(username) {
+  authScreen.style.display = 'none';
+  const initial = username.charAt(0).toUpperCase();
+  document.getElementById('sidebar-avatar').textContent   = initial;
+  document.getElementById('sidebar-username').textContent = username;
+}
+
+tabLogin.addEventListener('click', () => {
+  tabLogin.classList.add('active');
+  tabReg.classList.remove('active');
+  formLogin.style.display = '';
+  formReg.style.display   = 'none';
+  loginErr.textContent    = '';
+});
+
+tabReg.addEventListener('click', () => {
+  tabReg.classList.add('active');
+  tabLogin.classList.remove('active');
+  formReg.style.display   = '';
+  formLogin.style.display = 'none';
+  regErr.textContent      = '';
+});
+
+formLogin.addEventListener('submit', async e => {
+  e.preventDefault();
+  loginErr.textContent = '';
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  const btn = formLogin.querySelector('button[type=submit]');
+  btn.disabled = true; btn.textContent = 'ENTRANDO...';
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) { loginErr.textContent = data.error; return; }
+    hideAuthScreen(data.username);
+    await loadUserData();
+  } catch {
+    loginErr.textContent = 'Erro de conexão. Verifique o servidor.';
+  } finally {
+    btn.disabled = false; btn.textContent = 'ENTRAR';
+  }
+});
+
+formReg.addEventListener('submit', async e => {
+  e.preventDefault();
+  regErr.textContent = '';
+  const username = document.getElementById('reg-username').value.trim();
+  const password = document.getElementById('reg-password').value;
+  const confirm  = document.getElementById('reg-confirm').value;
+  if (password !== confirm) { regErr.textContent = 'As senhas não coincidem'; return; }
+  const btn = formReg.querySelector('button[type=submit]');
+  btn.disabled = true; btn.textContent = 'CRIANDO...';
+  try {
+    const res = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) { regErr.textContent = data.error; return; }
+    hideAuthScreen(data.username);
+    await loadUserData();
+  } catch {
+    regErr.textContent = 'Erro de conexão. Verifique o servidor.';
+  } finally {
+    btn.disabled = false; btn.textContent = 'CRIAR CONTA';
+  }
+});
+
+document.getElementById('btn-logout').addEventListener('click', async () => {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  myList = [];
+  cacheSet([]);
+  updateStats();
+  renderDashboard();
+  showAuthScreen();
+  document.getElementById('login-username').value = '';
+  document.getElementById('login-password').value = '';
+});
+
 // ── Init ──────────────────────────────────────────────────────
-function init() {
-  // Dados já carregados do localStorage no topo do arquivo
+async function loadUserData() {
+  try {
+    const dbList = await apiLoad();
+    if (dbList.length === 0 && myList.length > 0) {
+      for (const entry of myList) await apiSave(entry);
+      toast('Lista migrada para sua conta!', 'success');
+    } else {
+      myList = dbList;
+      cacheSet(myList);
+    }
+  } catch {
+    // Servidor indisponível — usa cache local
+  }
   renderDashboard();
   initGenrePills();
   loadSeasonCalendar();
+}
+
+async function init() {
+  try {
+    const res = await fetch('/api/auth/me');
+    if (!res.ok) { showAuthScreen(); return; }
+    const { username } = await res.json();
+    hideAuthScreen(username);
+    await loadUserData();
+  } catch {
+    showAuthScreen();
+  }
 }
 
 init();

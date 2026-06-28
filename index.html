@@ -47,6 +47,15 @@
         <span class="stat-mini-value" id="sidebar-total">0</span>
       </div>
     </div>
+    <div class="sidebar-user">
+      <div class="sidebar-user-info">
+        <div class="sidebar-avatar" id="sidebar-avatar">?</div>
+        <span class="sidebar-username" id="sidebar-username">—</span>
+      </div>
+      <button class="btn-logout" id="btn-logout" title="Sair">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      </button>
+    </div>
     <div class="sidebar-screws">
       <div class="screw"></div>
       <div class="screw"></div>
@@ -370,6 +379,57 @@
 
   <!-- TOAST -->
   <div class="toast" id="toast"></div>
+
+  <!-- ══ AUTH SCREEN ══ -->
+  <div id="auth-screen" class="auth-screen" style="display:none;">
+    <div class="auth-box">
+      <div class="auth-logo">
+        <div class="dex-eye"></div>
+        <div>
+          <div class="auth-logo-title">POKÉDEX</div>
+          <div class="auth-logo-sub">MyAnimeList</div>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="auth-tabs">
+        <button class="auth-tab active" id="tab-login">Entrar</button>
+        <button class="auth-tab" id="tab-register">Criar conta</button>
+      </div>
+
+      <!-- Login form -->
+      <form id="form-login" class="auth-form">
+        <div class="auth-field">
+          <label class="auth-label">Usuário</label>
+          <input type="text" id="login-username" class="auth-input" placeholder="Seu usuário" autocomplete="username" />
+        </div>
+        <div class="auth-field">
+          <label class="auth-label">Senha</label>
+          <input type="password" id="login-password" class="auth-input" placeholder="••••••••" autocomplete="current-password" />
+        </div>
+        <p class="auth-error" id="login-error"></p>
+        <button type="submit" class="auth-btn">ENTRAR</button>
+      </form>
+
+      <!-- Register form -->
+      <form id="form-register" class="auth-form" style="display:none;">
+        <div class="auth-field">
+          <label class="auth-label">Usuário</label>
+          <input type="text" id="reg-username" class="auth-input" placeholder="Escolha um usuário" autocomplete="username" />
+        </div>
+        <div class="auth-field">
+          <label class="auth-label">Senha</label>
+          <input type="password" id="reg-password" class="auth-input" placeholder="Mín. 4 caracteres" autocomplete="new-password" />
+        </div>
+        <div class="auth-field">
+          <label class="auth-label">Confirmar senha</label>
+          <input type="password" id="reg-confirm" class="auth-input" placeholder="Repita a senha" autocomplete="new-password" />
+        </div>
+        <p class="auth-error" id="reg-error"></p>
+        <button type="submit" class="auth-btn">CRIAR CONTA</button>
+      </form>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>
