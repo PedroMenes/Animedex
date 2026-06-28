@@ -6,13 +6,14 @@ const session  = require('express-session');
 const crypto   = require('crypto');
 
 const app        = express();
-const PORT       = 3131;
+const PORT       = process.env.PORT || 3131;
 const DB_FILE    = path.join(__dirname, 'data.json');
 const USERS_FILE = path.join(__dirname, 'users.json');
 const SECRET_FILE= path.join(__dirname, '.session-secret');
 
-// ── Session secret persistente ────────────────────────────────
+// ── Session secret (env var em produção, arquivo em dev) ──────
 function getSessionSecret() {
+  if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
   try { return fs.readFileSync(SECRET_FILE, 'utf8').trim(); } catch {}
   const s = crypto.randomBytes(32).toString('hex');
   fs.writeFileSync(SECRET_FILE, s, 'utf8');
