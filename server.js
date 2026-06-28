@@ -1,9 +1,10 @@
-const express  = require('express');
-const fs       = require('fs');
-const path     = require('path');
-const bcrypt   = require('bcryptjs');
-const session  = require('express-session');
-const crypto   = require('crypto');
+const express    = require('express');
+const fs         = require('fs');
+const path       = require('path');
+const bcrypt     = require('bcryptjs');
+const session    = require('express-session');
+const crypto     = require('crypto');
+const { createClient } = require('@libsql/client');
 
 const app        = express();
 const PORT       = process.env.PORT || 3131;
@@ -11,53 +12,142 @@ const DB_FILE    = path.join(__dirname, 'data.json');
 const USERS_FILE = path.join(__dirname, 'users.json');
 const SECRET_FILE= path.join(__dirname, '.session-secret');
 
-// ── Session secret (env var em produção, arquivo em dev) ──────
+// ── Turso (produção) vs JSON (dev local) ──────────────────────
+let turso = null;
+if (process.env.TURSO_URL && process.env.TURSO_TOKEN) {
+  turso = createClient({ url: process.env.TURSO_URL, authToken: process.env.TURSO_TOKEN });
+  console.log('[db] usando Turso');
+} else {
+  console.log('[db] usando JSON local (TURSO_URL não definido)');
+}
+
+async function initTurso() {
+  if (!turso) return;
+  await turso.batch([
+    { sql: `CREATE TABLE IF NOT EXISTS users (
+              id TEXT PRIMARY KEY,
+              username TEXT UNIQUE NOT NULL,
+              password_hash TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            )`, args: [] },
+    { sql: `CREATE TABLE IF NOT EXISTS lists (
+              user_id TEXT NOT NULL,
+              mal_id  INTEGER NOT NULL,
+              data    TEXT NOT NULL,
+              updated_at INTEGER NOT NULL,
+              PRIMARY KEY (user_id, mal_id)
+            )`, args: [] },
+  ], 'write');
+}
+
+// ── JSON fallback helpers (dev local) ────────────────────────
+function readDB() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+    return Array.isArray(raw) ? { _legacy: raw } : raw;
+  } catch { return {}; }
+}
+function writeDB(db) {
+  const tmp = DB_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(db, null, 2), 'utf8');
+  fs.renameSync(tmp, DB_FILE);
+}
+function readUsers() {
+  try { return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); }
+  catch { return []; }
+}
+function writeUsers(users) {
+  const tmp = USERS_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(users, null, 2), 'utf8');
+  fs.renameSync(tmp, USERS_FILE);
+}
+
+// ── DB abstraction (Turso ou JSON) ────────────────────────────
+async function dbGetUser(username) {
+  if (turso) {
+    const r = await turso.execute({
+      sql: 'SELECT id, username, password_hash, created_at FROM users WHERE LOWER(username)=LOWER(?)',
+      args: [username],
+    });
+    if (!r.rows[0]) return null;
+    const row = r.rows[0];
+    return { id: row.id, username: row.username, passwordHash: row.password_hash, createdAt: row.created_at };
+  }
+  return readUsers().find(u => u.username.toLowerCase() === username.toLowerCase()) || null;
+}
+
+async function dbCreateUser(user) {
+  if (turso) {
+    await turso.execute({
+      sql: 'INSERT INTO users (id, username, password_hash, created_at) VALUES (?,?,?,?)',
+      args: [user.id, user.username, user.passwordHash, user.createdAt],
+    });
+    return;
+  }
+  const users = readUsers();
+  users.push(user);
+  writeUsers(users);
+}
+
+async function dbUsernameExists(username) {
+  if (turso) {
+    const r = await turso.execute({
+      sql: 'SELECT 1 FROM users WHERE LOWER(username)=LOWER(?)',
+      args: [username],
+    });
+    return r.rows.length > 0;
+  }
+  return readUsers().some(u => u.username.toLowerCase() === username.toLowerCase());
+}
+
+async function dbGetList(userId) {
+  if (turso) {
+    const r = await turso.execute({
+      sql: 'SELECT data FROM lists WHERE user_id=? ORDER BY updated_at DESC',
+      args: [userId],
+    });
+    return r.rows.map(row => JSON.parse(row.data));
+  }
+  return readDB()[userId] || [];
+}
+
+async function dbUpsertEntry(userId, entry) {
+  if (turso) {
+    await turso.execute({
+      sql: `INSERT INTO lists (user_id, mal_id, data, updated_at) VALUES (?,?,?,?)
+            ON CONFLICT(user_id, mal_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at`,
+      args: [userId, entry.malId, JSON.stringify(entry), Date.now()],
+    });
+    return;
+  }
+  const db   = readDB();
+  const list = db[userId] || [];
+  const idx  = list.findIndex(e => e.malId === entry.malId);
+  if (idx >= 0) list[idx] = entry; else list.unshift(entry);
+  db[userId] = list;
+  writeDB(db);
+}
+
+async function dbDeleteEntry(userId, malId) {
+  if (turso) {
+    await turso.execute({
+      sql: 'DELETE FROM lists WHERE user_id=? AND mal_id=?',
+      args: [userId, malId],
+    });
+    return;
+  }
+  const db   = readDB();
+  db[userId] = (db[userId] || []).filter(e => e.malId !== malId);
+  writeDB(db);
+}
+
+// ── Session secret ────────────────────────────────────────────
 function getSessionSecret() {
   if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
   try { return fs.readFileSync(SECRET_FILE, 'utf8').trim(); } catch {}
   const s = crypto.randomBytes(32).toString('hex');
   fs.writeFileSync(SECRET_FILE, s, 'utf8');
   return s;
-}
-
-// ── DB helpers (por usuário) ──────────────────────────────────
-function readDB() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    // Migra formato legado (array global) para { userId: [] }
-    if (Array.isArray(raw)) return { _legacy: raw };
-    return raw;
-  } catch {
-    return {};
-  }
-}
-
-function writeDB(db) {
-  const tmp = DB_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(db, null, 2), 'utf8');
-  fs.renameSync(tmp, DB_FILE);
-}
-
-function readUserList(userId) {
-  return readDB()[userId] || [];
-}
-
-function writeUserList(userId, list) {
-  const db = readDB();
-  db[userId] = list;
-  writeDB(db);
-}
-
-// ── Users helpers ─────────────────────────────────────────────
-function readUsers() {
-  try { return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); }
-  catch { return []; }
-}
-
-function writeUsers(users) {
-  const tmp = USERS_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(users, null, 2), 'utf8');
-  fs.renameSync(tmp, USERS_FILE);
 }
 
 // ── Middleware ────────────────────────────────────────────────
@@ -77,60 +167,58 @@ function requireAuth(req, res, next) {
 
 // ── Auth routes ───────────────────────────────────────────────
 
-// GET /api/auth/me
 app.get('/api/auth/me', (req, res) => {
   if (!req.session.userId) return res.status(401).json({ error: 'Não autenticado' });
   res.json({ userId: req.session.userId, username: req.session.username });
 });
 
-// POST /api/auth/register
 app.post('/api/auth/register', async (req, res) => {
   const { username, password } = req.body || {};
-  if (!username?.trim() || !password) {
+  if (!username?.trim() || !password)
     return res.status(400).json({ error: 'Username e senha obrigatórios' });
-  }
-  if (username.trim().length < 3) {
+  if (username.trim().length < 3)
     return res.status(400).json({ error: 'Username deve ter ao menos 3 caracteres' });
-  }
-  if (password.length < 4) {
+  if (password.length < 4)
     return res.status(400).json({ error: 'Senha deve ter ao menos 4 caracteres' });
+
+  try {
+    if (await dbUsernameExists(username.trim()))
+      return res.status(409).json({ error: 'Username já em uso' });
+
+    const id           = crypto.randomUUID();
+    const passwordHash = await bcrypt.hash(password, 10);
+    await dbCreateUser({ id, username: username.trim(), passwordHash, createdAt: Date.now() });
+
+    req.session.userId   = id;
+    req.session.username = username.trim();
+    res.json({ ok: true, username: username.trim() });
+  } catch (err) {
+    console.error('[register]', err);
+    res.status(500).json({ error: 'Erro interno ao criar conta' });
   }
-
-  const users = readUsers();
-  if (users.find(u => u.username.toLowerCase() === username.trim().toLowerCase())) {
-    return res.status(409).json({ error: 'Username já em uso' });
-  }
-
-  const passwordHash = await bcrypt.hash(password, 10);
-  const id = crypto.randomUUID();
-  users.push({ id, username: username.trim(), passwordHash, createdAt: Date.now() });
-  writeUsers(users);
-
-  req.session.userId   = id;
-  req.session.username = username.trim();
-  res.json({ ok: true, username: username.trim() });
 });
 
-// POST /api/auth/login
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body || {};
-  if (!username || !password) {
+  if (!username || !password)
     return res.status(400).json({ error: 'Preencha usuário e senha' });
+
+  try {
+    const user = await dbGetUser(username);
+    if (!user) return res.status(401).json({ error: 'Usuário ou senha incorretos' });
+
+    const match = await bcrypt.compare(password, user.passwordHash);
+    if (!match) return res.status(401).json({ error: 'Usuário ou senha incorretos' });
+
+    req.session.userId   = user.id;
+    req.session.username = user.username;
+    res.json({ ok: true, username: user.username });
+  } catch (err) {
+    console.error('[login]', err);
+    res.status(500).json({ error: 'Erro interno ao fazer login' });
   }
-
-  const users = readUsers();
-  const user  = users.find(u => u.username.toLowerCase() === username.toLowerCase());
-  if (!user) return res.status(401).json({ error: 'Usuário ou senha incorretos' });
-
-  const match = await bcrypt.compare(password, user.passwordHash);
-  if (!match) return res.status(401).json({ error: 'Usuário ou senha incorretos' });
-
-  req.session.userId   = user.id;
-  req.session.username = user.username;
-  res.json({ ok: true, username: user.username });
 });
 
-// POST /api/auth/logout
 app.post('/api/auth/logout', (req, res) => {
   req.session.destroy(() => res.json({ ok: true }));
 });
@@ -197,7 +285,7 @@ function mapAnilistMedia(media) {
 
 async function anilistByGenre(genreId, page = 1) {
   const genreName = JIKAN_GENRE_TO_ANILIST[genreId];
-  if (!genreName) throw new Error(`Gênero ${genreId} sem mapeamento AniList`);
+  if (!genreName) throw new Error(`Gênero ${genreId} sem mapeamento`);
   const gql = `query ($genre: String, $page: Int, $perPage: Int) {
     Page(page: $page, perPage: $perPage) {
       pageInfo { hasNextPage }
@@ -215,8 +303,8 @@ async function anilistByGenre(genreId, page = 1) {
   if (!res.ok) throw new Error(`AniList ${res.status}`);
   const json = await res.json();
   if (json.errors) throw new Error(json.errors[0]?.message);
-  const pageData = json.data?.Page;
-  return { data: mapAnilistMedia(pageData?.media || []), pagination: { has_next_page: pageData?.pageInfo?.hasNextPage ?? false } };
+  const p = json.data?.Page;
+  return { data: mapAnilistMedia(p?.media || []), pagination: { has_next_page: p?.pageInfo?.hasNextPage ?? false } };
 }
 
 async function anilistSearch(query) {
@@ -239,7 +327,6 @@ async function anilistSearch(query) {
   return { data: mapAnilistMedia(json.data?.Page?.media || []), pagination: { has_next_page: false } };
 }
 
-// GET /api/jikan?path=...
 app.get('/api/jikan', async (req, res) => {
   const jikanPath = req.query.path;
   if (!jikanPath) return res.status(400).json({ error: 'path required' });
@@ -260,7 +347,6 @@ app.get('/api/jikan', async (req, res) => {
     try { return res.json(await anilistSearch(q)); }
     catch (e) { console.warn('[anilist] search falhou:', e.message); }
   }
-
   if (genreIds) {
     try { return res.json(await anilistByGenre(parseInt(genreIds.split(',')[0], 10), page)); }
     catch (e) { console.warn('[anilist] genre falhou:', e.message); }
@@ -269,33 +355,44 @@ app.get('/api/jikan', async (req, res) => {
   res.status(502).json({ error: 'API indisponível no momento. Tente novamente em breve.' });
 });
 
-// ── List API (protegida por auth) ─────────────────────────────
+// ── List API ──────────────────────────────────────────────────
 
-app.get('/api/list', requireAuth, (req, res) => {
-  res.json(readUserList(req.session.userId));
+app.get('/api/list', requireAuth, async (req, res) => {
+  try {
+    res.json(await dbGetList(req.session.userId));
+  } catch (err) {
+    console.error('[list get]', err);
+    res.status(500).json({ error: 'Erro ao carregar lista' });
+  }
 });
 
-app.post('/api/list', requireAuth, (req, res) => {
+app.post('/api/list', requireAuth, async (req, res) => {
   const entry = req.body;
   if (!entry?.malId) return res.status(400).json({ error: 'malId required' });
-
-  const list = readUserList(req.session.userId);
-  const idx  = list.findIndex(e => e.malId === entry.malId);
-  if (idx >= 0) list[idx] = entry; else list.unshift(entry);
-  writeUserList(req.session.userId, list);
-  res.json({ ok: true, total: list.length });
+  try {
+    await dbUpsertEntry(req.session.userId, entry);
+    const list = await dbGetList(req.session.userId);
+    res.json({ ok: true, total: list.length });
+  } catch (err) {
+    console.error('[list post]', err);
+    res.status(500).json({ error: 'Erro ao salvar entrada' });
+  }
 });
 
-app.delete('/api/list/:malId', requireAuth, (req, res) => {
+app.delete('/api/list/:malId', requireAuth, async (req, res) => {
   const malId = +req.params.malId;
   if (!malId) return res.status(400).json({ error: 'invalid malId' });
-
-  const list = readUserList(req.session.userId).filter(e => e.malId !== malId);
-  writeUserList(req.session.userId, list);
-  res.json({ ok: true, total: list.length });
+  try {
+    await dbDeleteEntry(req.session.userId, malId);
+    const list = await dbGetList(req.session.userId);
+    res.json({ ok: true, total: list.length });
+  } catch (err) {
+    console.error('[list delete]', err);
+    res.status(500).json({ error: 'Erro ao remover entrada' });
+  }
 });
 
 // ── Start ─────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`AnimeDex rodando em http://localhost:${PORT}`);
-});
+initTurso()
+  .then(() => app.listen(PORT, () => console.log(`AnimeDex rodando em http://localhost:${PORT}`)))
+  .catch(err => { console.error('[initTurso]', err); process.exit(1); });
