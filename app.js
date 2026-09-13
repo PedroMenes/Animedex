@@ -465,16 +465,17 @@ function populateModal(data, entry) {
   document.getElementById('ep-total').textContent = epTotal;
 
   const sub = [data.studio, data.year].filter(Boolean).join(' · ');
+  const synopsis = (data.synopsis || '').replace(/\s*\[Written by MAL Rewrite\]\s*$/i, '').trim();
   const infoEl = document.getElementById('modal-anime-info');
   infoEl.innerHTML = `
-    <img src="${data.image || ''}" alt="${data.title}" />
     <div class="modal-anime-details">
       <h3>${data.title}</h3>
       ${sub ? `<div class="modal-anime-sub">${sub}</div>` : ''}
       ${data.score ? `<div class="mal-score">${STAR_SVG}${data.score} no MAL</div>` : ''}
-      <div class="genre-tags">${genreTags(data.genres, 3)}</div>
-      ${data.synopsis ? `<p>${data.synopsis.substring(0, 130)}…</p>` : ''}
-    </div>`;
+      <div class="genre-tags">${genreTags(data.genres, 4)}</div>
+      ${synopsis ? `<p class="modal-synopsis">${synopsis}</p>` : ''}
+    </div>
+    <img class="modal-cover" src="${data.image || ''}" alt="${data.title}" />`;
 
   const scores = entry?.scores || { story:0, animation:0, characters:0, soundtrack:0 };
   const epLog  = entry?.episodeLog || [];
