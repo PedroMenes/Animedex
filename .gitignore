@@ -1,5 +1,7 @@
 node_modules/
+data.json
 data.json.tmp
 users.json
+users.json.tmp
 .session-secret
 .env

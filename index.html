@@ -3,117 +3,83 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MyAnimeList — Dashboard</title>
+  <title>AnimeDex — Home</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
-  <!-- Sidebar -->
-  <aside class="sidebar">
-    <div class="sidebar-logo">
-      <div class="dex-eye"></div>
-      <div class="sidebar-logo-text">
-        <span class="logo-title">POKÉDEX</span>
-        <span class="logo-sub">MyAnimeList</span>
-      </div>
-      <div class="dex-dots">
-        <div class="dex-dot red"></div>
-        <div class="dex-dot yellow"></div>
-        <div class="dex-dot green"></div>
+  <!-- ══ NAVBAR ══ -->
+  <header class="navbar">
+    <div class="navbar-inner">
+      <a href="#" class="nav-logo" data-view="dashboard">
+        <span class="nav-logo-mark">A</span>
+        <span class="nav-logo-text">ANIME<em>DEX</em></span>
+      </a>
+
+      <nav class="nav-links">
+        <a href="#" class="nav-item active" data-view="dashboard">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+          <span>Home</span>
+        </a>
+        <a href="#" class="nav-item" data-view="search">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <span>Buscar</span>
+        </a>
+        <a href="#" class="nav-item" data-view="list">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          <span>Minha Lista</span>
+        </a>
+        <a href="#" class="nav-item" data-view="stats">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          <span>Estatísticas</span>
+        </a>
+      </nav>
+
+      <div class="nav-right">
+        <span class="nav-count"><strong id="nav-total">0</strong> animes</span>
+        <div class="nav-user">
+          <div class="nav-avatar" id="nav-avatar">?</div>
+          <span class="nav-username" id="nav-username">—</span>
+          <button class="btn-logout" id="btn-logout" title="Sair">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          </button>
+        </div>
       </div>
     </div>
-    <nav class="sidebar-nav">
-      <a href="#" class="nav-item active" data-view="dashboard">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-        Dashboard
-      </a>
-      <a href="#" class="nav-item" data-view="search">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        Buscar
-      </a>
-      <a href="#" class="nav-item" data-view="list">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-        Minha Lista
-      </a>
-      <a href="#" class="nav-item" data-view="stats">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-        Estatísticas
-      </a>
-    </nav>
-    <div class="sidebar-stats">
-      <div class="stat-mini">
-        <span class="stat-mini-label">Total</span>
-        <span class="stat-mini-value" id="sidebar-total">0</span>
-      </div>
-    </div>
-    <div class="sidebar-user">
-      <div class="sidebar-user-info">
-        <div class="sidebar-avatar" id="sidebar-avatar">?</div>
-        <span class="sidebar-username" id="sidebar-username">—</span>
-      </div>
-      <button class="btn-logout" id="btn-logout" title="Sair">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-      </button>
-    </div>
-    <div class="sidebar-screws">
-      <div class="screw"></div>
-      <div class="screw"></div>
-    </div>
-  </aside>
+  </header>
 
   <!-- Main content -->
   <main class="main">
 
     <!-- ══ DASHBOARD ══ -->
     <section id="view-dashboard" class="view active">
-      <div class="page-header">
-        <h1>Dashboard</h1>
-        <p class="subtitle">Visão geral da sua lista de animes</p>
-      </div>
-
       <div class="stats-grid">
-        <div class="stat-card">
-          <div class="stat-icon watching">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          </div>
-          <div class="stat-info">
-            <span class="stat-value" id="count-watching">0</span>
-            <span class="stat-label">Assistindo</span>
-          </div>
+        <div class="stat-card stat-card--watching">
+          <span class="stat-label">Assistindo</span>
+          <span class="stat-value" id="count-watching">0</span>
+          <span class="stat-sub">em andamento</span>
         </div>
-        <div class="stat-card">
-          <div class="stat-icon completed">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-          </div>
-          <div class="stat-info">
-            <span class="stat-value" id="count-completed">0</span>
-            <span class="stat-label">Completos</span>
-          </div>
+        <div class="stat-card stat-card--completed">
+          <span class="stat-label">Completos</span>
+          <span class="stat-value" id="count-completed">0</span>
+          <span class="stat-sub">finalizados</span>
         </div>
-        <div class="stat-card">
-          <div class="stat-icon planned">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-          </div>
-          <div class="stat-info">
-            <span class="stat-value" id="count-planned">0</span>
-            <span class="stat-label">Planejado</span>
-          </div>
+        <div class="stat-card stat-card--planned">
+          <span class="stat-label">Planejado</span>
+          <span class="stat-value" id="count-planned">0</span>
+          <span class="stat-sub">na fila</span>
         </div>
-        <div class="stat-card">
-          <div class="stat-icon score">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-          </div>
-          <div class="stat-info">
-            <span class="stat-value" id="avg-score">—</span>
-            <span class="stat-label">Nota Média</span>
-          </div>
+        <div class="stat-card stat-card--score">
+          <span class="stat-label">Nota média</span>
+          <span class="stat-value" id="avg-score">—</span>
+          <span class="stat-sub">dos avaliados</span>
         </div>
       </div>
 
       <div class="dashboard-grid">
         <div class="dashboard-section">
-          <h2 class="section-title">Assistindo agora</h2>
+          <h2 class="section-title">Assistindo agora <span class="section-count" id="watching-count">0</span></h2>
           <div class="anime-row" id="watching-row">
             <div class="empty-row">Nenhum anime em andamento</div>
           </div>
@@ -130,7 +96,7 @@
           <h2 class="section-title">Temporada atual</h2>
           <div id="season-area">
             <div class="reco-loading" id="season-loading">
-              <div class="spinner"></div> CARREGANDO...
+              <div class="spinner"></div> Carregando…
             </div>
             <div id="season-days" class="season-days" style="display:none;"></div>
           </div>
@@ -142,8 +108,8 @@
           <div class="genre-pills" id="genre-pills"></div>
           <div class="reco-area" id="reco-area">
             <div class="reco-placeholder">
-              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-              <p>Selecione um gênero</p>
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              <p>Selecione um gênero acima</p>
             </div>
           </div>
         </div>
@@ -158,15 +124,11 @@
       </div>
       <div class="search-bar-wrap">
         <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input type="text" id="search-input" class="search-input" placeholder="Digite o nome do anime..." />
+        <input type="text" id="search-input" class="search-input" placeholder="Digite o nome do anime…" />
         <div class="search-spinner" id="search-spinner" style="display:none;"><div class="spinner"></div></div>
       </div>
-      <div class="search-results" id="search-results">
-        <div class="search-placeholder">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <p>Pesquise por um anime acima</p>
-        </div>
-      </div>
+      <p class="search-hint" id="search-hint">Sugestões populares</p>
+      <div class="search-results" id="search-results"></div>
     </section>
 
     <!-- ══ LISTA ══ -->
@@ -175,14 +137,15 @@
         <h1>Minha Lista</h1>
         <div class="list-controls">
           <div class="filter-tabs">
-            <button class="filter-tab active" data-filter="all">Todos</button>
-            <button class="filter-tab" data-filter="watching">Assistindo</button>
-            <button class="filter-tab" data-filter="completed">Completo</button>
-            <button class="filter-tab" data-filter="plan_to_watch">Planejado</button>
-            <button class="filter-tab" data-filter="on_hold">Em Pausa</button>
-            <button class="filter-tab" data-filter="dropped">Dropado</button>
+            <button class="filter-tab active" data-filter="all">Todos <span class="tab-count" data-count="all">0</span></button>
+            <button class="filter-tab" data-filter="watching">Assistindo <span class="tab-count" data-count="watching">0</span></button>
+            <button class="filter-tab" data-filter="completed">Completo <span class="tab-count" data-count="completed">0</span></button>
+            <button class="filter-tab" data-filter="plan_to_watch">Planejado <span class="tab-count" data-count="plan_to_watch">0</span></button>
+            <button class="filter-tab" data-filter="on_hold">Em Pausa <span class="tab-count" data-count="on_hold">0</span></button>
+            <button class="filter-tab" data-filter="dropped">Dropado <span class="tab-count" data-count="dropped">0</span></button>
           </div>
           <div class="sort-wrap">
+            <label for="sort-select">Ordenar por</label>
             <select id="sort-select" class="sort-select">
               <option value="date_desc">Recentes primeiro</option>
               <option value="date_asc">Antigos primeiro</option>
@@ -195,7 +158,7 @@
       </div>
       <div class="list-grid" id="list-grid">
         <div class="empty-list">
-          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
           <p>Sua lista está vazia</p>
           <a href="#" class="btn-add-first" data-view="search">Buscar animes</a>
         </div>
@@ -210,72 +173,51 @@
       </div>
 
       <div class="stats-overview-grid">
-        <div class="stat-card">
-          <div class="stat-icon watching">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          </div>
-          <div class="stat-info">
-            <span class="stat-value" id="stat-hours">—</span>
-            <span class="stat-label">Horas assistidas</span>
-          </div>
+        <div class="stat-card stat-card--brand">
+          <span class="stat-label">Horas assistidas</span>
+          <span class="stat-value" id="stat-hours">—</span>
+          <span class="stat-sub">estimado</span>
         </div>
-        <div class="stat-card">
-          <div class="stat-icon completed">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          </div>
-          <div class="stat-info">
-            <span class="stat-value" id="stat-eps">—</span>
-            <span class="stat-label">Episódios assistidos</span>
-          </div>
+        <div class="stat-card stat-card--watching">
+          <span class="stat-label">Episódios</span>
+          <span class="stat-value" id="stat-eps">—</span>
+          <span class="stat-sub">assistidos</span>
         </div>
-        <div class="stat-card">
-          <div class="stat-icon planned">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-          </div>
-          <div class="stat-info">
-            <span class="stat-value" id="stat-total">—</span>
-            <span class="stat-label">Total de animes</span>
-          </div>
+        <div class="stat-card stat-card--completed">
+          <span class="stat-label">Total de animes</span>
+          <span class="stat-value" id="stat-total">—</span>
+          <span class="stat-sub">na lista</span>
         </div>
-        <div class="stat-card">
-          <div class="stat-icon score">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-          </div>
-          <div class="stat-info">
-            <span class="stat-value" id="stat-avg">—</span>
-            <span class="stat-label">Nota média</span>
-          </div>
+        <div class="stat-card stat-card--score">
+          <span class="stat-label">Nota média</span>
+          <span class="stat-value" id="stat-avg">—</span>
+          <span class="stat-sub">dos avaliados</span>
         </div>
       </div>
 
       <div class="charts-grid">
-        <!-- Status breakdown -->
         <div class="chart-card">
           <h3 class="chart-title">Por Status</h3>
           <div id="chart-status"></div>
         </div>
 
-        <!-- Genre distribution -->
         <div class="chart-card">
           <h3 class="chart-title">Gêneros Favoritos</h3>
           <div id="chart-genres"></div>
         </div>
 
-        <!-- Score distribution -->
         <div class="chart-card">
           <h3 class="chart-title">Distribuição de Notas</h3>
           <div id="chart-scores"></div>
         </div>
 
-        <!-- Monthly activity -->
-        <div class="chart-card chart-card-wide">
-          <h3 class="chart-title">Atividade Mensal <span class="chart-subtitle">(episódios assistidos)</span></h3>
+        <div class="chart-card">
+          <h3 class="chart-title">Atividade Mensal <span class="chart-subtitle">episódios assistidos</span></h3>
           <div id="chart-monthly" class="monthly-chart"></div>
         </div>
 
-        <!-- Top rated -->
         <div class="chart-card chart-card-wide">
-          <h3 class="chart-title">Top 5 da Minha Lista</h3>
+          <h3 class="chart-title">Top 5 — Melhores Notas</h3>
           <div id="chart-top5" class="top5-list"></div>
         </div>
       </div>
@@ -299,16 +241,18 @@
         <input type="hidden" id="form-synopsis" />
         <input type="hidden" id="form-genres" />
         <input type="hidden" id="form-duration" />
+        <input type="hidden" id="form-studio" />
+        <input type="hidden" id="form-year" />
 
         <!-- Status -->
         <div class="form-row">
           <label class="form-label">Status</label>
           <div class="status-options">
-            <label class="status-opt"><input type="radio" name="status" value="watching" /><span>Assistindo</span></label>
-            <label class="status-opt"><input type="radio" name="status" value="completed" /><span>Completo</span></label>
-            <label class="status-opt"><input type="radio" name="status" value="plan_to_watch" /><span>Planejado</span></label>
-            <label class="status-opt"><input type="radio" name="status" value="on_hold" /><span>Em Pausa</span></label>
-            <label class="status-opt"><input type="radio" name="status" value="dropped" /><span>Dropado</span></label>
+            <label class="status-opt" style="--st-opt-color: var(--st-watching)"><input type="radio" name="status" value="watching" /><span>Assistindo</span></label>
+            <label class="status-opt" style="--st-opt-color: var(--st-completed)"><input type="radio" name="status" value="completed" /><span>Completo</span></label>
+            <label class="status-opt" style="--st-opt-color: var(--st-planned)"><input type="radio" name="status" value="plan_to_watch" /><span>Planejado</span></label>
+            <label class="status-opt" style="--st-opt-color: var(--st-onhold)"><input type="radio" name="status" value="on_hold" /><span>Em Pausa</span></label>
+            <label class="status-opt" style="--st-opt-color: var(--st-dropped)"><input type="radio" name="status" value="dropped" /><span>Dropado</span></label>
           </div>
         </div>
 
@@ -366,7 +310,7 @@
         <!-- Notes -->
         <div class="form-row">
           <label class="form-label" for="form-notes">Review / Notas</label>
-          <textarea id="form-notes" class="form-textarea" placeholder="Escreva suas impressões sobre o anime..."></textarea>
+          <textarea id="form-notes" class="form-textarea" placeholder="Escreva suas impressões sobre o anime…"></textarea>
         </div>
 
         <div class="form-actions">
@@ -384,12 +328,10 @@
   <div id="auth-screen" class="auth-screen" style="display:none;">
     <div class="auth-box">
       <div class="auth-logo">
-        <div class="dex-eye"></div>
-        <div>
-          <div class="auth-logo-title">POKÉDEX</div>
-          <div class="auth-logo-sub">MyAnimeList</div>
-        </div>
+        <span class="nav-logo-mark">A</span>
+        <span class="auth-logo-title">ANIME<em>DEX</em></span>
       </div>
+      <p class="auth-tagline">Acompanhe seus animes em um só lugar</p>
 
       <!-- Tabs -->
       <div class="auth-tabs">
@@ -408,7 +350,7 @@
           <input type="password" id="login-password" class="auth-input" placeholder="••••••••" autocomplete="current-password" />
         </div>
         <p class="auth-error" id="login-error"></p>
-        <button type="submit" class="auth-btn">ENTRAR</button>
+        <button type="submit" class="auth-btn">Entrar</button>
       </form>
 
       <!-- Register form -->
@@ -426,7 +368,7 @@
           <input type="password" id="reg-confirm" class="auth-input" placeholder="Repita a senha" autocomplete="new-password" />
         </div>
         <p class="auth-error" id="reg-error"></p>
-        <button type="submit" class="auth-btn">CRIAR CONTA</button>
+        <button type="submit" class="auth-btn">Criar conta</button>
       </form>
     </div>
   </div>

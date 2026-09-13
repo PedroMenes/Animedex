@@ -61,6 +61,7 @@ function showView(id) {
   if (id === 'dashboard') renderDashboard();
   if (id === 'list') renderList();
   if (id === 'stats') renderStats();
+  if (id === 'search' && !searchResults.children.length) showPopularSuggestions();
 }
 
 navItems.forEach(n => {
@@ -99,32 +100,85 @@ function updateStats() {
   document.getElementById('count-completed').textContent = counts.completed;
   document.getElementById('count-planned').textContent   = counts.plan_to_watch;
   document.getElementById('avg-score').textContent       = scoreCount ? (scoreSum / scoreCount).toFixed(1) : '—';
-  document.getElementById('sidebar-total').textContent   = myList.length;
+  document.getElementById('nav-total').textContent       = myList.length;
+  document.getElementById('watching-count').textContent  = counts.watching;
+
+  document.querySelectorAll('.tab-count').forEach(el => {
+    const key = el.dataset.count;
+    el.textContent = key === 'all' ? myList.length : counts[key];
+  });
 }
 
-// ── Status → Pokémon type mapping ────────────────────────────
-const STATUS_TYPES = {
-  watching:      { label: 'FIRE',    css: 'type-fire' },
-  completed:     { label: 'GRASS',   css: 'type-grass' },
-  plan_to_watch: { label: 'PSYCHIC', css: 'type-psychic' },
-  on_hold:       { label: 'ICE',     css: 'type-ice' },
-  dropped:       { label: 'DARK',    css: 'type-dark' },
+// ── Status metadata ───────────────────────────────────────────
+const STATUS_META = {
+  watching:      { label: 'Assistindo', color: 'var(--st-watching)' },
+  completed:     { label: 'Completo',   color: 'var(--st-completed)' },
+  plan_to_watch: { label: 'Planejado',  color: 'var(--st-planned)' },
+  on_hold:       { label: 'Em Pausa',   color: 'var(--st-onhold)' },
+  dropped:       { label: 'Dropado',    color: 'var(--st-dropped)' },
 };
 
-const STATUS_LABELS = {
-  watching:     'Assistindo',
-  completed:    'Completo',
-  plan_to_watch:'Planejado',
-  on_hold:      'Em Pausa',
-  dropped:      'Dropado',
+function statusMeta(status) {
+  return STATUS_META[status] || STATUS_META.plan_to_watch;
+}
+
+function statusPill(status) {
+  const s = statusMeta(status);
+  return `<span class="status-pill" style="--st-color:${s.color}">${s.label}</span>`;
+}
+
+// ── Genres — label (pt-BR) + color ───────────────────────────
+const GENRE_INFO = {
+  'action':        ['Ação',          '#E11D48'],
+  'adventure':     ['Aventura',      '#EA8C00'],
+  'comedy':        ['Comédia',       '#CA8A04'],
+  'drama':         ['Drama',         '#BE123C'],
+  'fantasy':       ['Fantasia',      '#8B5CF6'],
+  'horror':        ['Terror',        '#7E22CE'],
+  'mystery':       ['Mistério',      '#0D9488'],
+  'romance':       ['Romance',       '#EC4899'],
+  'sci-fi':        ['Sci-Fi',        '#0EA5E9'],
+  'slice of life': ['Slice of Life', '#10B981'],
+  'sports':        ['Esportes',      '#65A30D'],
+  'supernatural':  ['Sobrenatural',  '#7C3AED'],
+  'suspense':      ['Suspense',      '#475569'],
+  'psychological': ['Psicológico',   '#6D28D9'],
+  'historical':    ['Histórico',     '#A16207'],
+  'military':      ['Militar',       '#4D7C0F'],
+  'school':        ['Escolar',       '#0284C7'],
+  'music':         ['Música',        '#9333EA'],
+  'mecha':         ['Mecha',         '#334155'],
+  'gourmet':       ['Gourmet',       '#EA580C'],
+  'award winning': ['Premiado',      '#B45309'],
+  'avant garde':   ['Vanguarda',     '#4B5563'],
+  'ecchi':         ['Ecchi',         '#DB2777'],
+  'boys love':     ['Boys Love',     '#F472B6'],
+  'girls love':    ['Girls Love',    '#C026D3'],
+  'erotica':       ['Erótico',       '#9D174D'],
 };
 
-function typeBadge(status) {
-  const t = STATUS_TYPES[status] || { label: status.toUpperCase(), css: 'type-dark' };
-  return `<span class="type-badge ${t.css}">${t.label}</span>`;
+function genreInfo(name) {
+  const key = String(name).toLowerCase();
+  const hit = GENRE_INFO[key];
+  return hit ? { label: hit[0], color: hit[1] } : { label: name, color: '#5A6478' };
+}
+
+function genreTags(genres, limit = 2) {
+  return (genres || []).slice(0, limit)
+    .map(g => {
+      const { label, color } = genreInfo(g);
+      return `<span class="genre-tag" style="--tag-color:${color}">${label}</span>`;
+    })
+    .join('');
+}
+
+function cardSubtitle(entry) {
+  return [entry.studio, entry.year].filter(Boolean).join(' · ');
 }
 
 // ── Overlay HTML helpers ──────────────────────────────────────
+const STAR_SVG = '<svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
+
 function buildOverlay(synopsis, notes) {
   const synopsisHTML = synopsis
     ? `<p class="card-overlay-synopsis">${synopsis.substring(0, 300)}</p>`
@@ -132,7 +186,7 @@ function buildOverlay(synopsis, notes) {
 
   const notesHTML = notes
     ? `<div class="card-overlay-divider"></div>
-       <span class="card-overlay-notes-label">SUA ANÁLISE</span>
+       <span class="card-overlay-notes-label">Sua análise</span>
        <p class="card-overlay-notes">${notes.substring(0, 200)}</p>`
     : '';
 
@@ -140,25 +194,35 @@ function buildOverlay(synopsis, notes) {
 }
 
 // ── Anime Card HTML ───────────────────────────────────────────
-function animeCardHTML(entry, entryIndex) {
-  const num  = String(entryIndex !== undefined ? entryIndex + 1 : 0).padStart(4, '0');
-  const type = STATUS_TYPES[entry.status] || STATUS_TYPES.plan_to_watch;
-  const score = entry.userScore > 0
-    ? `<span class="anime-card-score"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>${entry.userScore}</span>`
+function animeCardHTML(entry) {
+  const s = statusMeta(entry.status);
+  const rating = entry.userScore > 0
+    ? `<span class="rating-badge">${STAR_SVG}${entry.userScore}</span>`
     : '';
 
+  const total   = entry.totalEpisodes || 0;
+  const watched = entry.epWatched || 0;
+  const pct     = total ? Math.min(100, (watched / total) * 100) : 0;
+  const sub     = cardSubtitle(entry);
+
   return `
-    <div class="anime-card" data-mal-id="${entry.malId}" style="--card-type-color: var(--${type.css})">
+    <div class="anime-card" data-mal-id="${entry.malId}" style="--st-color:${s.color}">
       <div class="anime-card-cover-wrap">
-        <span class="anime-card-num">#${num}</span>
+        <span class="status-badge">${s.label}</span>
+        ${rating}
         <img class="anime-card-cover" src="${entry.image}" alt="${entry.title}" loading="lazy" />
         ${buildOverlay(entry.synopsis, entry.notes)}
       </div>
       <div class="anime-card-body">
         <div class="anime-card-title">${entry.title}</div>
-        <div class="anime-card-meta">
-          ${typeBadge(entry.status)}
-          ${score}
+        ${sub ? `<div class="anime-card-sub">${sub}</div>` : ''}
+        <div class="genre-tags">${genreTags(entry.genres)}</div>
+        <div class="card-progress">
+          <div class="card-progress-head">
+            <span>Episódios</span>
+            <strong>${watched}/${total || '?'}</strong>
+          </div>
+          <div class="progress-track"><div class="progress-fill" style="width:${pct.toFixed(1)}%"></div></div>
         </div>
       </div>
     </div>`;
@@ -175,11 +239,11 @@ function renderDashboard() {
   const recent   = [...myList].sort((a, b) => b.addedAt - a.addedAt).slice(0, 10);
 
   watchingRow.innerHTML = watching.length
-    ? watching.map((a) => animeCardHTML(a, myList.indexOf(a))).join('')
+    ? watching.map(animeCardHTML).join('')
     : '<div class="empty-row">Nenhum anime em andamento</div>';
 
   recentRow.innerHTML = recent.length
-    ? recent.map((a) => animeCardHTML(a, myList.indexOf(a))).join('')
+    ? recent.map(animeCardHTML).join('')
     : '<div class="empty-row">Nenhum anime adicionado</div>';
 
   watchingRow.querySelectorAll('.anime-card').forEach(c =>
@@ -193,14 +257,15 @@ const searchInput   = document.getElementById('search-input');
 const searchResults = document.getElementById('search-results');
 const searchSpinner = document.getElementById('search-spinner');
 
+const searchHint = document.getElementById('search-hint');
+let popularCache = null;
+
 let searchTimer;
 searchInput.addEventListener('input', () => {
   clearTimeout(searchTimer);
   const q = searchInput.value.trim();
   if (!q) {
-    searchResults.innerHTML = `<div class="search-placeholder">
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      <p>Pesquise por um anime acima</p></div>`;
+    showPopularSuggestions();
     return;
   }
   searchTimer = setTimeout(() => runSearch(q), 600);
@@ -208,6 +273,7 @@ searchInput.addEventListener('input', () => {
 
 async function runSearch(query) {
   searchSpinner.style.display = 'flex';
+  searchHint.textContent = 'Resultados';
   searchResults.innerHTML = '';
   try {
     const results = await searchAnime(query);
@@ -220,6 +286,22 @@ async function runSearch(query) {
   }
 }
 
+async function showPopularSuggestions() {
+  searchHint.textContent = 'Sugestões populares';
+  if (popularCache) { renderSearchResults(popularCache); return; }
+
+  searchResults.innerHTML = '<div class="reco-loading"><div class="spinner"></div> Carregando…</div>';
+  try {
+    const json = await jikan('/top/anime?limit=10&sfw=true');
+    popularCache = json.data || [];
+    renderSearchResults(popularCache);
+  } catch {
+    searchResults.innerHTML = `<div class="search-placeholder">
+      <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <p>Pesquise por um anime acima</p></div>`;
+  }
+}
+
 function renderSearchResults(results) {
   if (!results.length) {
     searchResults.innerHTML = '<div class="search-placeholder"><p>Nenhum resultado encontrado</p></div>';
@@ -228,31 +310,27 @@ function renderSearchResults(results) {
 
   searchResults.innerHTML = results.map(a => {
     const inList   = myList.some(e => e.malId === a.mal_id);
-    const image    = a.images?.jpg?.large_image_url || a.images?.jpg?.image_url || '';
-    const episodes = a.episodes ? `${a.episodes} eps` : 'N/A';
-    const malScore = a.score ? a.score : '—';
+    const image    = a.images?.jpg?.image_url || a.images?.jpg?.large_image_url || '';
+    const studio   = a.studios?.[0]?.name;
+    const year     = a.year || a.aired?.prop?.from?.year;
+    const episodes = a.episodes ? `${a.episodes} eps` : 'eps N/A';
+    const meta     = [studio, year, episodes].filter(Boolean).join(' · ');
+    const score    = a.score
+      ? `<span class="result-score">${STAR_SVG}${a.score}</span>`
+      : '';
+    const tags     = genreTags((a.genres || []).map(g => g.name));
     const btnText  = inList ? 'Na lista ✓' : '+ Adicionar';
     const btnClass = inList ? 'btn-add in-list' : 'btn-add';
 
     return `
       <div class="result-card" data-mal-id="${a.mal_id}">
-        <div class="result-card-cover-wrap">
-          <img class="result-card-cover" src="${image}" alt="${a.title}" loading="lazy" />
-          ${buildOverlay(a.synopsis, null)}
-        </div>
-        <div class="result-card-body">
+        <img class="result-thumb" src="${image}" alt="${a.title}" loading="lazy" />
+        <div class="result-info">
           <div class="result-card-title">${a.title}</div>
-          <div class="result-card-meta">
-            <span>${episodes}</span>
-            <span class="result-score">
-              <svg width="11" height="11" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-              ${malScore}
-            </span>
-          </div>
+          <div class="result-card-meta"><span>${meta}</span>${score}</div>
+          <div class="genre-tags">${tags}</div>
         </div>
-        <div class="result-card-footer">
-          <button class="${btnClass}">${btnText}</button>
-        </div>
+        <button class="${btnClass}">${btnText}</button>
       </div>`;
   }).join('');
 
@@ -318,7 +396,7 @@ function renderList() {
     return;
   }
 
-  grid.innerHTML = items.map((a) => animeCardHTML(a, myList.indexOf(a))).join('');
+  grid.innerHTML = items.map(animeCardHTML).join('');
   grid.querySelectorAll('.anime-card').forEach(c =>
     c.addEventListener('click', () => openModal(+c.dataset.malId)));
 }
@@ -349,6 +427,8 @@ function openModal(malId) {
     synopsis: entry.synopsis,
     genres:   entry.genres || [],
     duration: entry.duration || 24,
+    studio:   entry.studio || '',
+    year:     entry.year || '',
   }, entry);
 }
 
@@ -364,6 +444,8 @@ function openModalFromSearch(animeData, inList) {
     synopsis: animeData.synopsis,
     genres:   (animeData.genres || []).map(g => g.name),
     duration: parseDuration(animeData.duration),
+    studio:   animeData.studios?.[0]?.name || existing?.studio || '',
+    year:     animeData.year || animeData.aired?.prop?.from?.year || existing?.year || '',
   }, existing || null);
 }
 
@@ -376,17 +458,22 @@ function populateModal(data, entry) {
   document.getElementById('form-synopsis').value  = data.synopsis || '';
   document.getElementById('form-genres').value    = JSON.stringify(data.genres || []);
   document.getElementById('form-duration').value  = data.duration || 24;
+  document.getElementById('form-studio').value    = data.studio || '';
+  document.getElementById('form-year').value      = data.year || '';
 
   const epTotal = data.episodes ? `/ ${data.episodes}` : '/ ?';
   document.getElementById('ep-total').textContent = epTotal;
 
+  const sub = [data.studio, data.year].filter(Boolean).join(' · ');
   const infoEl = document.getElementById('modal-anime-info');
   infoEl.innerHTML = `
     <img src="${data.image || ''}" alt="${data.title}" />
     <div class="modal-anime-details">
       <h3>${data.title}</h3>
-      ${data.score ? `<div class="mal-score"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>${data.score} no MAL</div>` : ''}
-      ${data.synopsis ? `<p>${data.synopsis.substring(0, 120)}…</p>` : ''}
+      ${sub ? `<div class="modal-anime-sub">${sub}</div>` : ''}
+      ${data.score ? `<div class="mal-score">${STAR_SVG}${data.score} no MAL</div>` : ''}
+      <div class="genre-tags">${genreTags(data.genres, 3)}</div>
+      ${data.synopsis ? `<p>${data.synopsis.substring(0, 130)}…</p>` : ''}
     </div>`;
 
   const scores = entry?.scores || { story:0, animation:0, characters:0, soundtrack:0 };
@@ -475,6 +562,8 @@ modalForm.addEventListener('submit', e => {
   const synopsis = document.getElementById('form-synopsis').value;
   const genres   = JSON.parse(document.getElementById('form-genres').value || '[]');
   const duration = +document.getElementById('form-duration').value || 24;
+  const studio   = document.getElementById('form-studio').value;
+  const year     = document.getElementById('form-year').value;
   const scores   = {
     story:      +document.getElementById('score-story').value,
     animation:  +document.getElementById('score-animation').value,
@@ -500,7 +589,7 @@ modalForm.addEventListener('submit', e => {
 
   const idx = myList.findIndex(e => e.malId === malId);
   const entry = {
-    malId, title, image, synopsis, genres, duration,
+    malId, title, image, synopsis, genres, duration, studio, year,
     totalEpisodes: episodes,
     malScore,
     status, userScore, epWatched, notes,
@@ -560,19 +649,19 @@ function refreshSearchButtons() {
 
 // ── Recommendations ───────────────────────────────────────────
 const GENRES = [
-  { id: 1,  name: 'Ação',         color: '#F08030' },
-  { id: 2,  name: 'Aventura',     color: '#6890F0' },
-  { id: 4,  name: 'Comédia',      color: '#F8D030' },
-  { id: 8,  name: 'Drama',        color: '#C03028' },
-  { id: 10, name: 'Fantasia',     color: '#7B62A3' },
-  { id: 14, name: 'Terror',       color: '#705848' },
-  { id: 7,  name: 'Mistério',     color: '#48D0B0' },
-  { id: 22, name: 'Romance',      color: '#F85888' },
-  { id: 24, name: 'Sci-Fi',       color: '#98D8D8' },
-  { id: 36, name: 'Slice of Life',color: '#78C850' },
-  { id: 30, name: 'Esportes',     color: '#A8A878' },
-  { id: 37, name: 'Sobrenatural', color: '#F85888' },
-  { id: 41, name: 'Suspense',     color: '#705848' },
+  { id: 1,  name: 'Ação',         color: GENRE_INFO['action'][1] },
+  { id: 2,  name: 'Aventura',     color: GENRE_INFO['adventure'][1] },
+  { id: 4,  name: 'Comédia',      color: GENRE_INFO['comedy'][1] },
+  { id: 8,  name: 'Drama',        color: GENRE_INFO['drama'][1] },
+  { id: 10, name: 'Fantasia',     color: GENRE_INFO['fantasy'][1] },
+  { id: 14, name: 'Terror',       color: GENRE_INFO['horror'][1] },
+  { id: 7,  name: 'Mistério',     color: GENRE_INFO['mystery'][1] },
+  { id: 22, name: 'Romance',      color: GENRE_INFO['romance'][1] },
+  { id: 24, name: 'Sci-Fi',       color: GENRE_INFO['sci-fi'][1] },
+  { id: 36, name: 'Slice of Life',color: GENRE_INFO['slice of life'][1] },
+  { id: 30, name: 'Esportes',     color: GENRE_INFO['sports'][1] },
+  { id: 37, name: 'Sobrenatural', color: GENRE_INFO['supernatural'][1] },
+  { id: 41, name: 'Suspense',     color: GENRE_INFO['suspense'][1] },
 ];
 
 let activeGenreId    = null;
@@ -606,10 +695,10 @@ async function fetchRecommendations(append = false) {
   const area = document.getElementById('reco-area');
 
   if (!append) {
-    area.innerHTML = `<div class="reco-loading"><div class="spinner"></div> CARREGANDO...</div>`;
+    area.innerHTML = `<div class="reco-loading"><div class="spinner"></div> Carregando…</div>`;
   } else {
     const btn = document.getElementById('btn-reco-more');
-    if (btn) { btn.disabled = true; btn.textContent = 'CARREGANDO...'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Carregando…'; }
   }
 
   try {
@@ -621,36 +710,33 @@ async function fetchRecommendations(append = false) {
       area.innerHTML = `<div class="reco-placeholder"><p>Erro ao carregar. Tente novamente.</p></div>`;
     } else {
       const btn = document.getElementById('btn-reco-more');
-      if (btn) { btn.disabled = false; btn.textContent = 'CARREGAR MAIS'; }
+      if (btn) { btn.disabled = false; btn.textContent = 'Carregar mais'; }
     }
     toast('Erro ao buscar recomendações', 'error');
   }
 }
 
 function recoCardHTML(a, color) {
-  const image    = a.images?.jpg?.large_image_url || a.images?.jpg?.image_url || '';
-  const malScore = a.score ? a.score : '—';
-  const episodes = a.episodes ? `${a.episodes} eps` : 'N/A';
-  const inList   = myList.some(e => e.malId === a.mal_id);
+  const image  = a.images?.jpg?.large_image_url || a.images?.jpg?.image_url || '';
+  const studio = a.studios?.[0]?.name;
+  const year   = a.year || a.aired?.prop?.from?.year;
+  const sub    = [studio, year].filter(Boolean).join(' · ');
+  const rating = a.score ? `<span class="rating-badge">${STAR_SVG}${a.score}</span>` : '';
+  const inList = myList.some(e => e.malId === a.mal_id);
   return `
     <div class="reco-card" data-mal-id="${a.mal_id}" style="--pill-color:${color}">
-      <div style="position:relative;overflow:hidden;flex-shrink:0;">
+      <div class="reco-card-cover-wrap">
+        ${rating}
         <img class="reco-card-cover" src="${image}" alt="${a.title}" loading="lazy" />
         ${buildOverlay(a.synopsis, null)}
       </div>
-      <div class="reco-card-stripe"></div>
       <div class="reco-card-body">
         <div class="reco-card-title">${a.title}</div>
-        <div class="reco-card-meta">
-          <span>${episodes}</span>
-          <span class="reco-card-score">
-            <svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-            ${malScore}
-          </span>
-        </div>
+        ${sub ? `<div class="reco-card-sub">${sub}</div>` : ''}
+        <div class="genre-tags">${genreTags((a.genres || []).map(g => g.name))}</div>
       </div>
       <div class="reco-card-footer">
-        <button class="btn-reco-add${inList ? ' in-list' : ''}">${inList ? 'NA LISTA ✓' : '+ ADICIONAR'}</button>
+        <button class="btn-reco-add${inList ? ' in-list' : ''}">${inList ? 'Na lista ✓' : '+ Adicionar'}</button>
       </div>
     </div>`;
 }
@@ -695,7 +781,7 @@ function appendRecommendations(results, hasNext, append) {
   if (hasNext) {
     const wrap = document.createElement('div');
     wrap.className = 'reco-more-wrap';
-    wrap.innerHTML = `<button id="btn-reco-more" class="btn-reco-more">CARREGAR MAIS</button>`;
+    wrap.innerHTML = `<button id="btn-reco-more" class="btn-reco-more">Carregar mais</button>`;
     wrap.querySelector('#btn-reco-more').addEventListener('click', () => {
       recoPage++;
       fetchRecommendations(true);
@@ -712,7 +798,7 @@ refreshSearchButtons = function() {
     const inList = myList.some(e => e.malId === malId);
     const btn    = card.querySelector('.btn-reco-add');
     if (btn) {
-      btn.textContent = inList ? 'NA LISTA ✓' : '+ ADICIONAR';
+      btn.textContent = inList ? 'Na lista ✓' : '+ Adicionar';
       btn.className   = inList ? 'btn-reco-add in-list' : 'btn-reco-add';
     }
   });
@@ -738,13 +824,15 @@ function renderStats() {
     'Em Pausa':   myList.filter(e=>e.status==='on_hold').length,
     'Dropado':    myList.filter(e=>e.status==='dropped').length,
   };
-  const statusColors = ['var(--type-fire)','var(--type-grass)','var(--type-psychic)','var(--type-ice)','var(--type-dark)'];
+  const statusColors = ['var(--st-watching)','var(--st-completed)','var(--st-planned)','var(--st-onhold)','var(--st-dropped)'];
   const statusMax = Math.max(...Object.values(statusCounts), 1);
   document.getElementById('chart-status').innerHTML = Object.entries(statusCounts).map(([label, count], i) => `
-    <div class="h-bar-row">
-      <span class="h-bar-label">${label}</span>
-      <div class="h-bar-track"><div class="h-bar-fill" style="width:${(count/statusMax*100).toFixed(1)}%;background:${statusColors[i]}"></div></div>
-      <span class="h-bar-val">${count}</span>
+    <div class="h-bar-row" style="--bar-color:${statusColors[i]}">
+      <div class="h-bar-head">
+        <span class="h-bar-label">${label}</span>
+        <span class="h-bar-val">${count}</span>
+      </div>
+      <div class="h-bar-track"><div class="h-bar-fill" style="width:${(count/statusMax*100).toFixed(1)}%"></div></div>
     </div>`).join('');
 
   const genreMap = {};
@@ -752,12 +840,17 @@ function renderStats() {
   const topGenres = Object.entries(genreMap).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const genreMax = topGenres[0]?.[1] || 1;
   document.getElementById('chart-genres').innerHTML = topGenres.length
-    ? topGenres.map(([g, c]) => `
-        <div class="h-bar-row">
-          <span class="h-bar-label">${g}</span>
+    ? topGenres.map(([g, c]) => {
+        const { label, color } = genreInfo(g);
+        return `
+        <div class="h-bar-row" style="--bar-color:${color}">
+          <div class="h-bar-head">
+            <span class="h-bar-label">${label}</span>
+            <span class="h-bar-val">${c} ${c === 1 ? 'anime' : 'animes'}</span>
+          </div>
           <div class="h-bar-track"><div class="h-bar-fill" style="width:${(c/genreMax*100).toFixed(1)}%"></div></div>
-          <span class="h-bar-val">${c}</span>
-        </div>`).join('')
+        </div>`;
+      }).join('')
     : '<div class="empty-chart">Adicione animes para ver gêneros</div>';
 
   const scoreBuckets = Array.from({length:10}, (_,i) => myList.filter(e=>e.userScore===i+1).length);
@@ -790,24 +883,21 @@ function renderStats() {
     </div>`).join('');
 
   const top5 = [...myList].filter(e=>e.userScore>0).sort((a,b)=>b.userScore-a.userScore).slice(0,5);
-  const catColors = ['#F08030','#78C850','#6890F0','#F85888'];
   document.getElementById('chart-top5').innerHTML = top5.length
     ? top5.map((e,i) => {
-        const catBars = ['story','animation','characters','soundtrack'].map((c,ci) =>
-          `<div class="top5-cat-bar" style="background:${catColors[ci]};height:${Math.max(2,(e.scores?.[c]||0)/10*4)}px;width:24px;border-radius:2px"></div>`
-        ).join('');
+        const sub = cardSubtitle(e);
         return `
           <div class="top5-item" data-mal-id="${e.malId}">
-            <span class="top5-rank">#${i+1}</span>
+            <span class="top5-rank">${i+1}</span>
             <img class="top5-img" src="${e.image}" alt="${e.title}" loading="lazy"/>
             <div class="top5-info">
               <div class="top5-title">${e.title}</div>
               <div class="top5-meta">
-                <span class="top5-score">★ ${e.userScore}</span>
-                ${typeBadge(e.status)}
+                ${statusPill(e.status)}
+                ${sub ? `<span class="result-card-meta">${sub}</span>` : ''}
               </div>
-              <div class="top5-cat-bars">${catBars}</div>
             </div>
+            <span class="top5-score">${e.userScore}<small>/10</small></span>
           </div>`;
       }).join('')
     : '<div class="empty-chart">Avalie seus animes para ver o top</div>';
@@ -843,12 +933,12 @@ async function loadSeasonCalendar() {
           <div class="season-day-label">${DAY_PT[d] || d}</div>
           <div class="season-row">${grouped[d].map(a => {
             const img     = a.images?.jpg?.image_url || '';
-            const score   = a.score ? `<span class="season-card-score"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>${a.score}</span>` : '';
+            const score   = a.score ? `<span class="season-card-score">${STAR_SVG}${a.score}</span>` : '';
             const inList  = myList.some(e => e.malId === a.mal_id);
             return `
-              <div class="season-card" data-mal-id="${a.mal_id}" data-raw='${JSON.stringify({mal_id:a.mal_id,title:a.title,images:a.images,episodes:a.episodes,score:a.score,synopsis:a.synopsis,genres:a.genres,duration:a.duration}).replace(/'/g,"&#39;")}'>
+              <div class="season-card" data-mal-id="${a.mal_id}" data-raw='${JSON.stringify({mal_id:a.mal_id,title:a.title,images:a.images,episodes:a.episodes,score:a.score,synopsis:a.synopsis,genres:a.genres,duration:a.duration,studios:a.studios,year:a.year,aired:a.aired}).replace(/'/g,"&#39;")}'>
                 <img class="season-card-img" src="${img}" alt="${a.title}" loading="lazy"/>
-                ${inList ? '<span class="season-in-list">NA LISTA</span>' : ''}
+                ${inList ? '<span class="season-in-list">Na lista</span>' : ''}
                 <div class="season-card-body">
                   <div class="season-card-title">${a.title}</div>
                   ${score}
@@ -884,9 +974,8 @@ function showAuthScreen() {
 
 function hideAuthScreen(username) {
   authScreen.style.display = 'none';
-  const initial = username.charAt(0).toUpperCase();
-  document.getElementById('sidebar-avatar').textContent   = initial;
-  document.getElementById('sidebar-username').textContent = username;
+  document.getElementById('nav-avatar').textContent   = username.charAt(0).toUpperCase();
+  document.getElementById('nav-username').textContent = username;
 }
 
 tabLogin.addEventListener('click', () => {
@@ -911,7 +1000,7 @@ formLogin.addEventListener('submit', async e => {
   const username = document.getElementById('login-username').value.trim();
   const password = document.getElementById('login-password').value;
   const btn = formLogin.querySelector('button[type=submit]');
-  btn.disabled = true; btn.textContent = 'ENTRANDO...';
+  btn.disabled = true; btn.textContent = 'Entrando…';
   try {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
@@ -925,7 +1014,7 @@ formLogin.addEventListener('submit', async e => {
   } catch {
     loginErr.textContent = 'Erro de conexão. Verifique o servidor.';
   } finally {
-    btn.disabled = false; btn.textContent = 'ENTRAR';
+    btn.disabled = false; btn.textContent = 'Entrar';
   }
 });
 
@@ -937,7 +1026,7 @@ formReg.addEventListener('submit', async e => {
   const confirm  = document.getElementById('reg-confirm').value;
   if (password !== confirm) { regErr.textContent = 'As senhas não coincidem'; return; }
   const btn = formReg.querySelector('button[type=submit]');
-  btn.disabled = true; btn.textContent = 'CRIANDO...';
+  btn.disabled = true; btn.textContent = 'Criando…';
   try {
     const res = await fetch('/api/auth/register', {
       method: 'POST',
@@ -951,7 +1040,7 @@ formReg.addEventListener('submit', async e => {
   } catch {
     regErr.textContent = 'Erro de conexão. Verifique o servidor.';
   } finally {
-    btn.disabled = false; btn.textContent = 'CRIAR CONTA';
+    btn.disabled = false; btn.textContent = 'Criar conta';
   }
 });
 
