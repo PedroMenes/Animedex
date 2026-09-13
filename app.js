@@ -176,6 +176,62 @@ function cardSubtitle(entry) {
   return [entry.studio, entry.year].filter(Boolean).join(' · ');
 }
 
+// ── Sinopse — limpeza e tradução ──────────────────────────────
+const synopsisPtCache = new Map();
+
+function cleanSynopsis(text) {
+  return (text || '').replace(/\s*\[Written by MAL Rewrite\]\s*$/i, '').trim();
+}
+
+async function translateText(text) {
+  const res = await fetch(`${API_BASE}/translate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) throw new Error('tradução falhou');
+  return (await res.json()).text;
+}
+
+async function getSynopsisPt(malId, original) {
+  const text = cleanSynopsis(original);
+  if (!text) return '';
+  if (synopsisPtCache.has(malId)) return synopsisPtCache.get(malId);
+  const pt = await translateText(text);
+  synopsisPtCache.set(malId, pt);
+  return pt;
+}
+
+function entrySynopsis(entry) {
+  return entry.synopsisPt || synopsisPtCache.get(entry.malId) || cleanSynopsis(entry.synopsis);
+}
+
+// Traduz em segundo plano as entradas da lista que ainda não têm sinopse em pt-BR
+let backfillRunning = false;
+async function backfillSynopsisPt() {
+  if (backfillRunning) return;
+  backfillRunning = true;
+  try {
+    const pending = myList.filter(e => !e.synopsisPt && cleanSynopsis(e.synopsis));
+    for (const entry of pending) {
+      let pt;
+      try { pt = await getSynopsisPt(entry.malId, entry.synopsis); }
+      catch { break; }
+      entry.synopsisPt = pt;
+      cacheSet(myList);
+      apiSave(entry).catch(() => {});
+      await new Promise(r => setTimeout(r, 300));
+    }
+    if (pending.length) {
+      const activeView = document.querySelector('.view.active')?.id;
+      if (activeView === 'view-dashboard') renderDashboard();
+      if (activeView === 'view-list') renderList();
+    }
+  } finally {
+    backfillRunning = false;
+  }
+}
+
 // ── Overlay HTML helpers ──────────────────────────────────────
 const STAR_SVG = '<svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
 
@@ -211,7 +267,7 @@ function animeCardHTML(entry) {
         <span class="status-badge">${s.label}</span>
         ${rating}
         <img class="anime-card-cover" src="${entry.image}" alt="${entry.title}" loading="lazy" />
-        ${buildOverlay(entry.synopsis, entry.notes)}
+        ${buildOverlay(entrySynopsis(entry), entry.notes)}
       </div>
       <div class="anime-card-body">
         <div class="anime-card-title">${entry.title}</div>
@@ -465,7 +521,9 @@ function populateModal(data, entry) {
   document.getElementById('ep-total').textContent = epTotal;
 
   const sub = [data.studio, data.year].filter(Boolean).join(' · ');
-  const synopsis = (data.synopsis || '').replace(/\s*\[Written by MAL Rewrite\]\s*$/i, '').trim();
+  const original = cleanSynopsis(data.synopsis);
+  const knownPt  = entry?.synopsisPt || synopsisPtCache.get(data.mal_id);
+  const synopsis = knownPt || original;
   const infoEl = document.getElementById('modal-anime-info');
   infoEl.innerHTML = `
     <div class="modal-anime-details">
@@ -474,8 +532,20 @@ function populateModal(data, entry) {
       ${data.score ? `<div class="mal-score">${STAR_SVG}${data.score} no MAL</div>` : ''}
       <div class="genre-tags">${genreTags(data.genres, 4)}</div>
       ${synopsis ? `<p class="modal-synopsis">${synopsis}</p>` : ''}
+      ${original && !knownPt ? '<span class="modal-synopsis-hint">Traduzindo…</span>' : ''}
     </div>
     <img class="modal-cover" src="${data.image || ''}" alt="${data.title}" />`;
+
+  if (original && !knownPt) {
+    getSynopsisPt(data.mal_id, original)
+      .then(pt => {
+        if (+document.getElementById('form-mal-id').value !== data.mal_id) return;
+        const p = infoEl.querySelector('.modal-synopsis');
+        if (p) p.textContent = pt;
+      })
+      .catch(() => {})
+      .finally(() => infoEl.querySelector('.modal-synopsis-hint')?.remove());
+  }
 
   const scores = entry?.scores || { story:0, animation:0, characters:0, soundtrack:0 };
   const epLog  = entry?.episodeLog || [];
@@ -591,6 +661,7 @@ modalForm.addEventListener('submit', e => {
   const idx = myList.findIndex(e => e.malId === malId);
   const entry = {
     malId, title, image, synopsis, genres, duration, studio, year,
+    synopsisPt: synopsisPtCache.get(malId) || prevEntry?.synopsisPt || '',
     totalEpisodes: episodes,
     malScore,
     status, userScore, epWatched, notes,
@@ -1073,6 +1144,7 @@ async function loadUserData() {
   renderDashboard();
   initGenrePills();
   loadSeasonCalendar();
+  backfillSynopsisPt();
 }
 
 async function init() {

@@ -930,6 +930,13 @@ body {
   margin-top: 12px;
   white-space: pre-line;
 }
+.modal-synopsis-hint {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
 .mal-score {
   display: inline-flex;
   align-items: center;

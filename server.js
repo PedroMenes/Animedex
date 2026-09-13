@@ -355,6 +355,41 @@ app.get('/api/jikan', async (req, res) => {
   res.status(502).json({ error: 'API indisponível no momento. Tente novamente em breve.' });
 });
 
+// ── Tradução (en → pt-BR) ─────────────────────────────────────
+const translateCache = new Map();
+
+async function translateToPt(text) {
+  if (translateCache.has(text)) return translateCache.get(text);
+
+  const body = new URLSearchParams({ client: 'gtx', sl: 'en', tl: 'pt', dt: 't', q: text });
+  const res = await fetch('https://translate.googleapis.com/translate_a/single', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`translate ${res.status}`);
+
+  const json = await res.json();
+  const out = (json?.[0] || []).map(seg => seg?.[0] || '').join('').trim();
+  if (!out) throw new Error('resposta vazia');
+
+  translateCache.set(text, out);
+  return out;
+}
+
+app.post('/api/translate', async (req, res) => {
+  const text = String(req.body?.text || '').trim();
+  if (!text) return res.status(400).json({ error: 'text required' });
+  if (text.length > 6000) return res.status(413).json({ error: 'texto muito longo' });
+  try {
+    res.json({ text: await translateToPt(text) });
+  } catch (err) {
+    console.warn('[translate] falhou:', err.message);
+    res.status(502).json({ error: 'tradução indisponível' });
+  }
+});
+
 // ── List API ──────────────────────────────────────────────────
 
 app.get('/api/list', requireAuth, async (req, res) => {
