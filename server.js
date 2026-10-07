@@ -327,6 +327,50 @@ async function anilistSearch(query) {
   return { data: mapAnilistMedia(json.data?.Page?.media || []), pagination: { has_next_page: false } };
 }
 
+const WEEKDAYS = ['Sundays','Mondays','Tuesdays','Wednesdays','Thursdays','Fridays','Saturdays'];
+
+// O Jikan reporta broadcast.day no fuso do Japão — o AniList dá só o timestamp
+function jstWeekday(airingAt) {
+  if (!airingAt) return null;
+  return WEEKDAYS[new Date((airingAt + 9 * 3600) * 1000).getUTCDay()];
+}
+
+function currentSeason() {
+  const now = new Date();
+  const m = now.getUTCMonth();
+  return {
+    season: m < 3 ? 'WINTER' : m < 6 ? 'SPRING' : m < 9 ? 'SUMMER' : 'FALL',
+    year: now.getUTCFullYear(),
+  };
+}
+
+async function anilistSeasonNow(perPage = 25) {
+  const { season, year } = currentSeason();
+  const gql = `query ($season: MediaSeason, $year: Int, $perPage: Int) {
+    Page(perPage: $perPage) {
+      media(type: ANIME, season: $season, seasonYear: $year, sort: POPULARITY_DESC) {
+        idMal id title { romaji english } coverImage { large }
+        episodes averageScore description(asHtml: false) genres duration status
+        nextAiringEpisode { airingAt }
+      }
+    }
+  }`;
+  const res = await fetch('https://graphql.anilist.co', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: gql, variables: { season, year, perPage } }),
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`AniList ${res.status}`);
+  const json = await res.json();
+  if (json.errors) throw new Error(json.errors[0]?.message);
+  const media = json.data?.Page?.media || [];
+  const data = mapAnilistMedia(media).map((entry, i) => ({
+    ...entry,
+    broadcast: { day: jstWeekday(media[i].nextAiringEpisode?.airingAt) },
+  }));
+  return { data, pagination: { has_next_page: false } };
+}
+
 app.get('/api/jikan', async (req, res) => {
   const jikanPath = req.query.path;
   if (!jikanPath) return res.status(400).json({ error: 'path required' });
@@ -343,6 +387,10 @@ app.get('/api/jikan', async (req, res) => {
   const genreIds = urlObj.searchParams.get('genres');
   const page     = parseInt(urlObj.searchParams.get('page') || '1', 10);
 
+  if (urlObj.pathname.startsWith('/seasons/now')) {
+    try { return res.json(await anilistSeasonNow()); }
+    catch (e) { console.warn('[anilist] season falhou:', e.message); }
+  }
   if (q) {
     try { return res.json(await anilistSearch(q)); }
     catch (e) { console.warn('[anilist] search falhou:', e.message); }
