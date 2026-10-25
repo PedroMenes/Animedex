@@ -267,6 +267,11 @@ const JIKAN_GENRE_TO_ANILIST = {
   30:'Sports', 37:'Supernatural', 41:'Thriller',
 };
 
+// Campos pedidos em toda query AniList — o mapper abaixo depende de todos eles
+const ANILIST_MEDIA_FIELDS = `idMal id type format title { romaji english } coverImage { large }
+        episodes averageScore description(asHtml: false) genres duration status
+        startDate { year } studios(isMain: true) { nodes { name } }`;
+
 function mapAnilistMedia(media) {
   return media.map(a => ({
     mal_id:   a.idMal || a.id,
@@ -278,6 +283,8 @@ function mapAnilistMedia(media) {
     synopsis: a.description ? a.description.replace(/<[^>]*>/g, '') : null,
     genres:   (a.genres || []).map(g => ({ name: g })),
     duration: a.duration ? `${a.duration} min per ep` : null,
+    studios:  a.studios?.nodes?.[0]?.name ? [{ name: a.studios.nodes[0].name }] : [],
+    year:     a.startDate?.year || null,
     status:   a.status,
     _source:  'anilist',
   }));
@@ -290,8 +297,7 @@ async function anilistByGenre(genreId, page = 1) {
     Page(page: $page, perPage: $perPage) {
       pageInfo { hasNextPage }
       media(type: ANIME, genre: $genre, sort: SCORE_DESC) {
-        idMal id title { romaji english } coverImage { large }
-        episodes averageScore description(asHtml: false) genres duration status
+        ${ANILIST_MEDIA_FIELDS}
       }
     }
   }`;
@@ -311,8 +317,7 @@ async function anilistSearch(query) {
   const gql = `query ($search: String, $perPage: Int) {
     Page(perPage: $perPage) {
       media(search: $search, type: ANIME, sort: SCORE_DESC) {
-        idMal id title { romaji english } coverImage { large }
-        episodes averageScore description(asHtml: false) genres duration status
+        ${ANILIST_MEDIA_FIELDS}
       }
     }
   }`;
@@ -349,8 +354,7 @@ async function anilistSeasonNow(perPage = 25) {
   const gql = `query ($season: MediaSeason, $year: Int, $perPage: Int) {
     Page(perPage: $perPage) {
       media(type: ANIME, season: $season, seasonYear: $year, sort: POPULARITY_DESC) {
-        idMal id title { romaji english } coverImage { large }
-        episodes averageScore description(asHtml: false) genres duration status
+        ${ANILIST_MEDIA_FIELDS}
         nextAiringEpisode { airingAt }
       }
     }
@@ -384,23 +388,13 @@ const RELATION_LABELS = {
   SUMMARY:     'Resumo',
 };
 
-const ANILIST_RELATED_FIELDS = `idMal id type format title { romaji english } coverImage { large }
-  episodes averageScore description(asHtml: false) genres duration status
-  startDate { year } studios(isMain: true) { nodes { name } }`;
-
 // O app inteiro é chaveado por malId — sem ele o card não abre o modal
 function usableAnime(node) {
   return !!node && node.type === 'ANIME' && !!node.idMal;
 }
 
 function mapRelatedNode(node) {
-  const [mapped] = mapAnilistMedia([node]);
-  const studio = node.studios?.nodes?.[0]?.name;
-  return {
-    ...mapped,
-    studios: studio ? [{ name: studio }] : [],
-    year: node.startDate?.year || null,
-  };
+  return mapAnilistMedia([node])[0];
 }
 
 const relatedCache = new Map();
@@ -408,9 +402,9 @@ const relatedCache = new Map();
 async function anilistRelated(idMal) {
   const gql = `query ($idMal: Int) {
     Media(idMal: $idMal, type: ANIME) {
-      relations { edges { relationType node { ${ANILIST_RELATED_FIELDS} } } }
+      relations { edges { relationType node { ${ANILIST_MEDIA_FIELDS} } } }
       recommendations(sort: RATING_DESC, perPage: 10) {
-        nodes { mediaRecommendation { ${ANILIST_RELATED_FIELDS} } }
+        nodes { mediaRecommendation { ${ANILIST_MEDIA_FIELDS} } }
       }
     }
   }`;
