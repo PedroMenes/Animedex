@@ -937,6 +937,30 @@ body {
   color: var(--text-muted);
   font-style: italic;
 }
+
+.modal-related {
+  margin-top: 26px;
+  padding-top: 22px;
+  border-top: 1px solid var(--border);
+}
+.modal-related-section + .modal-related-section { margin-top: 20px; }
+.modal-related-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+.related-type {
+  display: block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .5px;
+  text-transform: uppercase;
+  color: var(--brand);
+  margin-bottom: 5px;
+}
 .mal-score {
   display: inline-flex;
   align-items: center;

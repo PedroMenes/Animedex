@@ -371,6 +371,90 @@ async function anilistSeasonNow(perPage = 25) {
   return { data, pagination: { has_next_page: false } };
 }
 
+// ── Relacionados (franquia + parecidos) ───────────────────────
+// Vai direto ao AniList: traz relações e recomendações numa só consulta,
+// e o Jikan precisaria de duas (além de estar fora do ar).
+const RELATION_LABELS = {
+  SEQUEL:      'Sequência',
+  PREQUEL:     'Prequela',
+  SIDE_STORY:  'História paralela',
+  SPIN_OFF:    'Spin-off',
+  ALTERNATIVE: 'Versão alternativa',
+  PARENT:      'Obra principal',
+  SUMMARY:     'Resumo',
+};
+
+const ANILIST_RELATED_FIELDS = `idMal id type format title { romaji english } coverImage { large }
+  episodes averageScore description(asHtml: false) genres duration status
+  startDate { year } studios(isMain: true) { nodes { name } }`;
+
+// O app inteiro é chaveado por malId — sem ele o card não abre o modal
+function usableAnime(node) {
+  return !!node && node.type === 'ANIME' && !!node.idMal;
+}
+
+function mapRelatedNode(node) {
+  const [mapped] = mapAnilistMedia([node]);
+  const studio = node.studios?.nodes?.[0]?.name;
+  return {
+    ...mapped,
+    studios: studio ? [{ name: studio }] : [],
+    year: node.startDate?.year || null,
+  };
+}
+
+const relatedCache = new Map();
+
+async function anilistRelated(idMal) {
+  const gql = `query ($idMal: Int) {
+    Media(idMal: $idMal, type: ANIME) {
+      relations { edges { relationType node { ${ANILIST_RELATED_FIELDS} } } }
+      recommendations(sort: RATING_DESC, perPage: 10) {
+        nodes { mediaRecommendation { ${ANILIST_RELATED_FIELDS} } }
+      }
+    }
+  }`;
+  const res = await fetch('https://graphql.anilist.co', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: gql, variables: { idMal } }),
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`AniList ${res.status}`);
+  const json = await res.json();
+  if (json.errors) throw new Error(json.errors[0]?.message);
+
+  const media = json.data?.Media;
+  if (!media) return { franchise: [], similar: [] };
+
+  const franchise = (media.relations?.edges || [])
+    .filter(e => RELATION_LABELS[e.relationType] && usableAnime(e.node))
+    .map(e => ({ ...mapRelatedNode(e.node), relationLabel: RELATION_LABELS[e.relationType] }));
+
+  const similar = (media.recommendations?.nodes || [])
+    .map(n => n.mediaRecommendation)
+    .filter(usableAnime)
+    .map(mapRelatedNode);
+
+  return { franchise, similar };
+}
+
+app.get('/api/related/:malId', async (req, res) => {
+  const malId = parseInt(req.params.malId, 10);
+  if (!Number.isInteger(malId) || malId <= 0) return res.status(400).json({ error: 'malId inválido' });
+
+  const hit = relatedCache.get(malId);
+  if (hit && hit.expiresAt > Date.now()) return res.json(hit.data);
+
+  try {
+    const data = await anilistRelated(malId);
+    relatedCache.set(malId, { data, expiresAt: Date.now() + CACHE_TTL });
+    res.json(data);
+  } catch (err) {
+    console.warn('[related] falhou:', err.message);
+    res.status(502).json({ error: 'relacionados indisponíveis' });
+  }
+});
+
 app.get('/api/jikan', async (req, res) => {
   const jikanPath = req.query.path;
   if (!jikanPath) return res.status(400).json({ error: 'path required' });

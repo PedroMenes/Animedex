@@ -505,6 +505,95 @@ function openModalFromSearch(animeData, inList) {
   }, existing || null);
 }
 
+// ── Relacionados no modal ─────────────────────────────────────
+const relatedCache = new Map();
+
+function currentModalId() {
+  return +document.getElementById('form-mal-id').value;
+}
+
+// O form vive só no DOM até o submit, então trocar de anime descartaria edições
+let modalSnapshot = '';
+
+function formSnapshot() {
+  return JSON.stringify({
+    status: modalForm.querySelector('input[name="status"]:checked')?.value,
+    score:  scoreSlider.value,
+    cats:   ['story','animation','characters','soundtrack'].map(c => document.getElementById(`score-${c}`).value),
+    eps:    document.getElementById('form-ep-watched').value,
+    log:    [...document.querySelectorAll('#ep-grid .ep-btn.watched')].map(b => b.dataset.ep),
+    notes:  document.getElementById('form-notes').value,
+  });
+}
+
+function relatedCardHTML(a, typeLabel) {
+  const img    = a.images?.jpg?.large_image_url || a.images?.jpg?.image_url || '';
+  const score  = a.score ? `<span class="season-card-score">${STAR_SVG}${a.score}</span>` : '';
+  const inList = myList.some(e => e.malId === a.mal_id);
+  const raw    = JSON.stringify(a).replace(/'/g, '&#39;');
+  return `
+    <div class="season-card" data-mal-id="${a.mal_id}" data-raw='${raw}'>
+      <img class="season-card-img" src="${img}" alt="${a.title}" loading="lazy" />
+      ${inList ? '<span class="season-in-list">Na lista</span>' : ''}
+      <div class="season-card-body">
+        ${typeLabel ? `<span class="related-type">${typeLabel}</span>` : ''}
+        <div class="season-card-title">${a.title}</div>
+        ${score}
+      </div>
+    </div>`;
+}
+
+function navigateToRelated(card) {
+  if (formSnapshot() !== modalSnapshot &&
+      !confirm('Você tem alterações não salvas neste anime. Trocar mesmo assim?')) return;
+
+  const malId = +card.dataset.malId;
+  const entry = myList.find(e => e.malId === malId);
+  if (entry) openModal(malId);
+  else openModalFromSearch(JSON.parse(card.dataset.raw.replace(/&#39;/g, "'")));
+  document.querySelector('.modal').scrollTop = 0;
+}
+
+function renderRelatedRow(wrapEl, rowEl, items, showType) {
+  if (!items.length) { wrapEl.style.display = 'none'; return; }
+  rowEl.innerHTML = items.map(a => relatedCardHTML(a, showType ? a.relationLabel : '')).join('');
+  rowEl.querySelectorAll('.season-card').forEach(card =>
+    card.addEventListener('click', () => navigateToRelated(card)));
+  wrapEl.style.display = 'block';
+}
+
+async function loadRelated(malId) {
+  const wrap    = document.getElementById('modal-related');
+  const loading = document.getElementById('related-loading');
+  const fWrap   = document.getElementById('related-franchise-wrap');
+  const sWrap   = document.getElementById('related-similar-wrap');
+
+  fWrap.style.display = 'none';
+  sWrap.style.display = 'none';
+  wrap.style.display  = 'block';
+  loading.style.display = 'flex';
+
+  let data = relatedCache.get(malId);
+  if (!data) {
+    try {
+      const res = await fetch(`${API_BASE}/related/${malId}`);
+      if (!res.ok) throw new Error('falhou');
+      data = await res.json();
+      relatedCache.set(malId, data);
+    } catch {
+      if (currentModalId() === malId) wrap.style.display = 'none';
+      return;
+    }
+  }
+
+  if (currentModalId() !== malId) return;
+
+  loading.style.display = 'none';
+  renderRelatedRow(fWrap, document.getElementById('related-franchise'), data.franchise, true);
+  renderRelatedRow(sWrap, document.getElementById('related-similar'), data.similar, false);
+  if (!data.franchise.length && !data.similar.length) wrap.style.display = 'none';
+}
+
 function populateModal(data, entry) {
   document.getElementById('form-mal-id').value    = data.mal_id;
   document.getElementById('form-title').value     = data.title;
@@ -594,6 +683,8 @@ function populateModal(data, entry) {
 
   updateScoreDisplay();
   overlay.style.display = 'flex';
+  modalSnapshot = formSnapshot();
+  loadRelated(data.mal_id);
 }
 
 function updateScoreDisplay() {
