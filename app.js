@@ -62,6 +62,12 @@ function showView(id) {
   if (id === 'list') renderList();
   if (id === 'stats') renderStats();
   if (id === 'search' && !searchResults.children.length) showPopularSuggestions();
+  if (id === 'reading') {
+    renderReading();
+    initMangaGenrePills();
+    // Lista vazia: já abre nas sugestões, senão a página fica só com o estado vazio
+    if (!myReading.length && !readingInput.value.trim()) showPopularManga();
+  }
 }
 
 navItems.forEach(n => {
@@ -411,9 +417,10 @@ function renderSearchResults(results) {
 let currentFilter = 'all';
 let currentSort   = 'date_desc';
 
-document.querySelectorAll('.filter-tab').forEach(btn => {
+// Escopado: a página de leituras tem suas próprias .filter-tab
+document.querySelectorAll('#view-list .filter-tab').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.filter-tab').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#view-list .filter-tab').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     currentFilter = btn.dataset.filter;
     renderList();
@@ -1121,6 +1128,599 @@ async function loadSeasonCalendar() {
   }
 }
 
+// ── Leituras (mangá / light novel) ────────────────────────────
+// Lista própria: no MAL os IDs de anime e mangá são espaços separados,
+// então isto nunca pode se misturar com `myList`.
+const READING_KEY = 'animedex_reading';
+
+let myReading = (() => {
+  try { return JSON.parse(localStorage.getItem(READING_KEY)) || []; }
+  catch { return []; }
+})();
+
+function readingCacheSet() {
+  localStorage.setItem(READING_KEY, JSON.stringify(myReading));
+}
+
+const READING_STATUS_LABELS = {
+  watching:      'Lendo',
+  completed:     'Lido',
+  plan_to_watch: 'Pretendo ler',
+  on_hold:       'Em Pausa',
+  dropped:       'Dropado',
+};
+
+const FORMAT_LABELS = { MANGA: 'Mangá', NOVEL: 'Light Novel', ONE_SHOT: 'One-shot' };
+
+function readingStatusMeta(status) {
+  const base = statusMeta(status);
+  return { color: base.color, label: READING_STATUS_LABELS[status] || base.label };
+}
+
+async function apiReadingSave(entry) {
+  const res = await fetch(`${API_BASE}/reading`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(entry),
+  });
+  if (!res.ok) throw new Error('falha ao salvar');
+}
+
+// ── Card ──────────────────────────────────────────────────────
+function readingCardHTML(entry) {
+  const s = readingStatusMeta(entry.status);
+  const rating = entry.userScore > 0
+    ? `<span class="rating-badge">${STAR_SVG}${entry.userScore}</span>`
+    : '';
+
+  const total = entry.totalChapters || 0;
+  const read  = entry.chaptersRead || 0;
+  const pct   = total ? Math.min(100, (read / total) * 100) : 0;
+  const sub   = [entry.author, entry.year].filter(Boolean).join(' · ');
+
+  return `
+    <div class="anime-card" data-mal-id="${entry.malId}" style="--st-color:${s.color}">
+      <div class="anime-card-cover-wrap">
+        <span class="status-badge">${s.label}</span>
+        ${rating}
+        <img class="anime-card-cover" src="${entry.image}" alt="${entry.title}" loading="lazy" />
+        ${buildOverlay(entry.synopsis, entry.notes)}
+      </div>
+      <div class="anime-card-body">
+        <div class="anime-card-title">${entry.title}</div>
+        ${sub ? `<div class="anime-card-sub">${sub}</div>` : ''}
+        <div class="genre-tags">${genreTags(entry.genres)}</div>
+        <div class="card-progress">
+          <div class="card-progress-head">
+            <span>Capítulos</span>
+            <strong>${read}/${total || '?'}</strong>
+          </div>
+          <div class="progress-track"><div class="progress-fill" style="width:${pct.toFixed(1)}%"></div></div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ── Lista ─────────────────────────────────────────────────────
+let readingFilter = 'all';
+let readingFormat = 'all';
+let readingSort   = 'date_desc';
+
+function updateReadingCounts() {
+  const counts = { all: myReading.length };
+  Object.keys(READING_STATUS_LABELS).forEach(k => {
+    counts[k] = myReading.filter(e => e.status === k).length;
+  });
+  document.querySelectorAll('#reading-status-tabs [data-rcount]').forEach(el => {
+    el.textContent = counts[el.dataset.rcount] ?? 0;
+  });
+}
+
+function renderReading() {
+  updateReadingCounts();
+  const grid = document.getElementById('reading-grid');
+
+  let items = myReading.filter(e =>
+    (readingFilter === 'all' || e.status === readingFilter) &&
+    (readingFormat === 'all' || (e.format || 'MANGA') === readingFormat));
+
+  items.sort((a, b) => {
+    if (readingSort === 'date_desc')  return b.addedAt - a.addedAt;
+    if (readingSort === 'date_asc')   return a.addedAt - b.addedAt;
+    if (readingSort === 'score_desc') return (b.userScore || 0) - (a.userScore || 0);
+    if (readingSort === 'score_asc')  return (a.userScore || 0) - (b.userScore || 0);
+    if (readingSort === 'title_asc')  return a.title.localeCompare(b.title);
+    return 0;
+  });
+
+  if (!items.length) {
+    grid.innerHTML = `
+      <div class="empty-list">
+        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+        <p>${myReading.length ? 'Nada neste filtro' : 'Nenhuma leitura ainda'}</p>
+        ${myReading.length ? '' : '<p class="subtitle">Use a busca acima para adicionar um mangá ou light novel.</p>'}
+      </div>`;
+    return;
+  }
+
+  grid.innerHTML = items.map(readingCardHTML).join('');
+  grid.querySelectorAll('.anime-card').forEach(c =>
+    c.addEventListener('click', () => openReadingModal(+c.dataset.malId)));
+}
+
+// Seletores escopados: as abas globais `.filter-tab` pertencem à lista de anime
+document.querySelectorAll('#reading-status-tabs .filter-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#reading-status-tabs .filter-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    readingFilter = btn.dataset.rfilter;
+    renderReading();
+  });
+});
+
+document.querySelectorAll('#reading-format-tabs .filter-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#reading-format-tabs .filter-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    readingFormat = btn.dataset.rformat;
+    renderReading();
+  });
+});
+
+document.getElementById('reading-sort-select').addEventListener('change', e => {
+  readingSort = e.target.value;
+  renderReading();
+});
+
+// ── Busca ─────────────────────────────────────────────────────
+const readingInput   = document.getElementById('reading-search-input');
+const readingResults = document.getElementById('reading-results');
+const readingSpinner = document.getElementById('reading-search-spinner');
+const readingListPane   = document.getElementById('reading-list-pane');
+const readingSearchPane = document.getElementById('reading-search-pane');
+
+let readingSearchTimer;
+let popularMangaCache = null;
+
+function showReadingPane(which) {
+  readingListPane.style.display   = which === 'list' ? 'block' : 'none';
+  readingSearchPane.style.display = which === 'search' ? 'block' : 'none';
+}
+
+readingInput.addEventListener('input', () => {
+  clearTimeout(readingSearchTimer);
+  const q = readingInput.value.trim();
+  if (!q) { showReadingPane('list'); renderReading(); return; }
+  readingSearchTimer = setTimeout(() => runReadingSearch(q), 600);
+});
+
+async function runReadingSearch(q) {
+  showReadingPane('search');
+  readingSpinner.style.display = 'flex';
+  document.getElementById('reading-search-hint').textContent = `Resultados para "${q}"`;
+  try {
+    const res = await fetch(`${API_BASE}/manga/search?q=${encodeURIComponent(q)}`);
+    if (!res.ok) throw new Error('falhou');
+    renderReadingResults((await res.json()).data);
+  } catch {
+    readingResults.innerHTML = '<div class="search-placeholder"><p>Erro ao buscar. Tente novamente.</p></div>';
+  } finally {
+    readingSpinner.style.display = 'none';
+  }
+}
+
+async function showPopularManga() {
+  showReadingPane('search');
+  document.getElementById('reading-search-hint').textContent = 'Sugestões populares';
+  if (popularMangaCache) { renderReadingResults(popularMangaCache); return; }
+  readingSpinner.style.display = 'flex';
+  try {
+    const res = await fetch(`${API_BASE}/manga/popular`);
+    if (!res.ok) throw new Error('falhou');
+    popularMangaCache = (await res.json()).data;
+    renderReadingResults(popularMangaCache);
+  } catch {
+    showReadingPane('list');
+  } finally {
+    readingSpinner.style.display = 'none';
+  }
+}
+
+function renderReadingResults(results) {
+  if (!results.length) {
+    readingResults.innerHTML = '<div class="search-placeholder"><p>Nenhum resultado encontrado</p></div>';
+    return;
+  }
+
+  readingResults.innerHTML = results.map(a => {
+    const inList = myReading.some(e => e.malId === a.malId);
+    const meta   = [FORMAT_LABELS[a.format] || a.format, a.author, a.year,
+                    a.chapters ? `${a.chapters} cap` : null].filter(Boolean).join(' · ');
+    const score  = a.score ? `<span class="result-score">${STAR_SVG}${a.score}</span>` : '';
+    return `
+      <div class="result-card" data-mal-id="${a.malId}">
+        <img class="result-thumb" src="${a.image}" alt="${a.title}" loading="lazy" />
+        <div class="result-info">
+          <div class="result-card-title">${a.title}</div>
+          <div class="result-card-meta"><span>${meta}</span>${score}</div>
+          <div class="genre-tags">${genreTags(a.genres)}</div>
+        </div>
+        <button class="btn-add${inList ? ' in-list' : ''}">${inList ? 'Na lista ✓' : '+ Adicionar'}</button>
+      </div>`;
+  }).join('');
+
+  readingResults.querySelectorAll('.result-card').forEach(card => {
+    const found = results.find(r => r.malId === +card.dataset.malId);
+    const open = () => openReadingModalFromSearch(found);
+    card.addEventListener('click', open);
+    card.querySelector('.btn-add').addEventListener('click', e => { e.stopPropagation(); open(); });
+  });
+}
+
+// ── Modal ─────────────────────────────────────────────────────
+const readingOverlay = document.getElementById('reading-overlay');
+const readingForm    = document.getElementById('reading-form');
+const rScoreSlider   = document.getElementById('r-user-score');
+const rScoreDisplay  = document.getElementById('r-score-display');
+const rBtnRemove     = document.getElementById('r-btn-remove');
+const READING_CATS   = ['story', 'art', 'characters'];
+
+function openReadingModal(malId) {
+  const entry = myReading.find(e => e.malId === malId);
+  if (entry) populateReadingModal(entry, entry);
+}
+
+function openReadingModalFromSearch(data) {
+  const existing = myReading.find(e => e.malId === data.malId);
+  populateReadingModal(data, existing || null);
+}
+
+function updateRScoreDisplay() {
+  const v = +rScoreSlider.value;
+  rScoreDisplay.textContent = v === 0 ? '—' : v;
+}
+
+function populateReadingModal(data, entry) {
+  document.getElementById('r-mal-id').value = data.malId;
+  readingOverlay.dataset.raw = JSON.stringify(data);
+
+  const sub = [FORMAT_LABELS[data.format] || data.format, data.author, data.year]
+    .filter(Boolean).join(' · ');
+  const synopsis = cleanSynopsis(data.synopsis);
+
+  document.getElementById('reading-info').innerHTML = `
+    <div class="modal-anime-details">
+      <h3>${data.title}</h3>
+      ${sub ? `<div class="modal-anime-sub">${sub}</div>` : ''}
+      ${data.score ? `<div class="mal-score">${STAR_SVG}${data.score} no AniList</div>` : ''}
+      <div class="genre-tags">${genreTags(data.genres, 4)}</div>
+      ${synopsis ? `<p class="modal-synopsis">${synopsis}</p>` : ''}
+    </div>
+    <img class="modal-cover" src="${data.image || ''}" alt="${data.title}" />`;
+
+  document.getElementById('r-chapters-total').textContent =
+    data.totalChapters || data.chapters ? `/ ${data.totalChapters || data.chapters} capítulos` : 'capítulos';
+  document.getElementById('r-volumes-total').textContent =
+    data.totalVolumes || data.volumes ? `/ ${data.totalVolumes || data.volumes} volumes` : 'volumes';
+
+  const scores = entry?.scores || {};
+  READING_CATS.forEach(c => {
+    document.getElementById(`r-score-${c}`).value = scores[c] || 0;
+    document.getElementById(`r-val-${c}`).textContent = scores[c] > 0 ? scores[c] : '—';
+  });
+
+  if (entry) {
+    readingForm.querySelector(`input[name="rstatus"][value="${entry.status}"]`).checked = true;
+    rScoreSlider.value = entry.userScore || 0;
+    document.getElementById('r-chapters-read').value = entry.chaptersRead || 0;
+    document.getElementById('r-volumes-read').value  = entry.volumesRead || 0;
+    document.getElementById('r-notes').value = entry.notes || '';
+    rBtnRemove.style.display = 'inline-flex';
+  } else {
+    readingForm.querySelector('input[name="rstatus"][value="plan_to_watch"]').checked = true;
+    rScoreSlider.value = 0;
+    document.getElementById('r-chapters-read').value = 0;
+    document.getElementById('r-volumes-read').value  = 0;
+    document.getElementById('r-notes').value = '';
+    rBtnRemove.style.display = 'none';
+  }
+
+  updateRScoreDisplay();
+  readingOverlay.style.display = 'flex';
+  loadReadingRelated(data.malId);
+}
+
+rScoreSlider.addEventListener('input', updateRScoreDisplay);
+
+READING_CATS.forEach(c => {
+  document.getElementById(`r-score-${c}`).addEventListener('input', function () {
+    const v = +this.value;
+    document.getElementById(`r-val-${c}`).textContent = v > 0 ? v : '—';
+    const vals = READING_CATS.map(x => +document.getElementById(`r-score-${x}`).value).filter(x => x > 0);
+    if (vals.length) {
+      rScoreSlider.value = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+      updateRScoreDisplay();
+    }
+  });
+});
+
+function closeReadingModal() { readingOverlay.style.display = 'none'; }
+document.getElementById('reading-close').addEventListener('click', closeReadingModal);
+readingOverlay.addEventListener('click', e => { if (e.target === readingOverlay) closeReadingModal(); });
+
+readingForm.addEventListener('submit', e => {
+  e.preventDefault();
+  const data  = JSON.parse(readingOverlay.dataset.raw);
+  const malId = +document.getElementById('r-mal-id').value;
+  const idx   = myReading.findIndex(x => x.malId === malId);
+
+  const entry = {
+    malId,
+    title:  data.title,
+    image:  data.image,
+    format: data.format || 'MANGA',
+    synopsis: data.synopsis || '',
+    genres: data.genres || [],
+    author: data.author || '',
+    year:   data.year || null,
+    malScore: data.score || 0,
+    totalChapters: data.totalChapters || data.chapters || 0,
+    totalVolumes:  data.totalVolumes  || data.volumes  || 0,
+    status:       readingForm.querySelector('input[name="rstatus"]:checked')?.value || 'plan_to_watch',
+    userScore:    +rScoreSlider.value,
+    chaptersRead: +document.getElementById('r-chapters-read').value,
+    volumesRead:  +document.getElementById('r-volumes-read').value,
+    notes:        document.getElementById('r-notes').value.trim(),
+    scores: Object.fromEntries(READING_CATS.map(c => [c, +document.getElementById(`r-score-${c}`).value])),
+    addedAt:   idx >= 0 ? myReading[idx].addedAt : Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  const isUpdate = idx >= 0;
+  if (isUpdate) myReading[idx] = entry; else myReading.unshift(entry);
+
+  readingCacheSet();
+  closeReadingModal();
+  apiReadingSave(entry)
+    .then(() => toast(isUpdate ? 'Leitura atualizada!' : 'Leitura adicionada!', 'success'))
+    .catch(() => toast('Salvo localmente — erro no banco', 'error'));
+
+  readingInput.value = '';
+  showReadingPane('list');
+  renderReading();
+});
+
+rBtnRemove.addEventListener('click', () => {
+  const malId = +document.getElementById('r-mal-id').value;
+  myReading = myReading.filter(e => e.malId !== malId);
+  readingCacheSet();
+  closeReadingModal();
+  fetch(`${API_BASE}/reading/${malId}`, { method: 'DELETE' })
+    .then(() => toast('Leitura removida', ''))
+    .catch(() => toast('Removido localmente — erro no banco', 'error'));
+  renderReading();
+});
+
+// ── Recomendações por gênero ──────────────────────────────────
+// O AniList filtra por nome de gênero, não por id como o Jikan
+const MANGA_GENRES = [
+  ['Action', 'Ação'], ['Adventure', 'Aventura'], ['Comedy', 'Comédia'],
+  ['Drama', 'Drama'], ['Fantasy', 'Fantasia'], ['Horror', 'Terror'],
+  ['Mystery', 'Mistério'], ['Romance', 'Romance'], ['Sci-Fi', 'Sci-Fi'],
+  ['Slice of Life', 'Slice of Life'], ['Sports', 'Esportes'],
+  ['Supernatural', 'Sobrenatural'], ['Psychological', 'Psicológico'],
+];
+
+let activeMangaGenre = null;
+let mangaRecoPage    = 1;
+let mangaRecoShown   = new Set();
+
+function initMangaGenrePills() {
+  const box = document.getElementById('reading-genre-pills');
+  if (box.children.length) return;
+  box.innerHTML = MANGA_GENRES.map(([name, label]) => {
+    const { color } = genreInfo(name);
+    return `<button class="genre-pill" data-genre="${name}" style="--pill-color:${color}">${label}</button>`;
+  }).join('');
+
+  box.querySelectorAll('.genre-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (activeMangaGenre === btn.dataset.genre) return;
+      box.querySelectorAll('.genre-pill').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeMangaGenre = btn.dataset.genre;
+      mangaRecoPage    = 1;
+      mangaRecoShown   = new Set();
+      fetchMangaReco(false);
+    });
+  });
+}
+
+function mangaRecoCardHTML(a) {
+  const inList = myReading.some(e => e.malId === a.malId);
+  const sub    = [FORMAT_LABELS[a.format] || a.format, a.year].filter(Boolean).join(' · ');
+  const rating = a.score ? `<span class="rating-badge">${STAR_SVG}${a.score}</span>` : '';
+  return `
+    <div class="reco-card" data-mal-id="${a.malId}">
+      <div class="reco-card-cover-wrap">
+        ${rating}
+        <img class="reco-card-cover" src="${a.image}" alt="${a.title}" loading="lazy" />
+        ${buildOverlay(a.synopsis, null)}
+      </div>
+      <div class="reco-card-body">
+        <div class="reco-card-title">${a.title}</div>
+        ${sub ? `<div class="reco-card-sub">${sub}</div>` : ''}
+        <div class="genre-tags">${genreTags(a.genres)}</div>
+      </div>
+      <div class="reco-card-footer">
+        <button class="btn-reco-add${inList ? ' in-list' : ''}">${inList ? 'Na lista ✓' : '+ Adicionar'}</button>
+      </div>
+    </div>`;
+}
+
+async function fetchMangaReco(append) {
+  const area = document.getElementById('reading-reco-area');
+  if (!append) {
+    area.innerHTML = '<div class="reco-loading"><div class="spinner"></div> Carregando…</div>';
+  } else {
+    const btn = document.getElementById('btn-manga-reco-more');
+    if (btn) { btn.disabled = true; btn.textContent = 'Carregando…'; }
+  }
+
+  const genre = activeMangaGenre;
+  try {
+    const res = await fetch(`${API_BASE}/manga/genre?genre=${encodeURIComponent(genre)}&page=${mangaRecoPage}`);
+    if (!res.ok) throw new Error('falhou');
+    const json = await res.json();
+    if (genre !== activeMangaGenre) return;   // o usuário já trocou de gênero
+    renderMangaReco(json.data, json.hasNext, append);
+  } catch {
+    if (genre !== activeMangaGenre) return;
+    if (!append) area.innerHTML = '<div class="reco-placeholder"><p>Erro ao carregar. Tente novamente.</p></div>';
+    else {
+      const btn = document.getElementById('btn-manga-reco-more');
+      if (btn) { btn.disabled = false; btn.textContent = 'Carregar mais'; }
+    }
+  }
+}
+
+function renderMangaReco(results, hasNext, append) {
+  const area = document.getElementById('reading-reco-area');
+  const novos = results.filter(a => !myReading.some(e => e.malId === a.malId) && !mangaRecoShown.has(a.malId));
+  novos.forEach(a => mangaRecoShown.add(a.malId));
+
+  let grid;
+  if (append) {
+    grid = area.querySelector('.reco-grid');
+    document.getElementById('btn-manga-reco-more')?.parentElement?.remove();
+  } else {
+    if (!novos.length) {
+      area.innerHTML = '<div class="reco-grid"><div class="reco-empty"><p>Você já tem todos na lista!</p></div></div>';
+      return;
+    }
+    area.innerHTML = '<div class="reco-grid"></div>';
+    grid = area.querySelector('.reco-grid');
+  }
+
+  novos.forEach(a => {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = mangaRecoCardHTML(a).trim();
+    const card = tmp.firstElementChild;
+    const open = () => openReadingModalFromSearch(a);
+    card.addEventListener('click', open);
+    card.querySelector('.btn-reco-add').addEventListener('click', e => { e.stopPropagation(); open(); });
+    grid.appendChild(card);
+  });
+
+  if (hasNext) {
+    const wrap = document.createElement('div');
+    wrap.className = 'reco-more-wrap';
+    wrap.innerHTML = '<button id="btn-manga-reco-more" class="btn-reco-more">Carregar mais</button>';
+    wrap.querySelector('button').addEventListener('click', () => {
+      mangaRecoPage++;
+      fetchMangaReco(true);
+    });
+    area.appendChild(wrap);
+  }
+}
+
+// ── Franquia e parecidos no modal de leitura ──────────────────
+const mangaRelatedCache = new Map();
+
+function relatedItemId(a) {
+  return a.mediaType === 'ANIME' ? a.mal_id : a.malId;
+}
+
+function mangaRelatedCardHTML(a, typeLabel) {
+  const id     = relatedItemId(a);
+  const isAnime = a.mediaType === 'ANIME';
+  const img    = isAnime
+    ? (a.images?.jpg?.large_image_url || a.images?.jpg?.image_url || '')
+    : (a.image || '');
+  const score  = a.score ? `<span class="season-card-score">${STAR_SVG}${a.score}</span>` : '';
+  const inList = isAnime
+    ? myList.some(e => e.malId === id)
+    : myReading.some(e => e.malId === id);
+  const raw    = JSON.stringify(a).replace(/'/g, '&#39;');
+  return `
+    <div class="season-card" data-mal-id="${id}" data-media="${a.mediaType}" data-raw='${raw}'>
+      <img class="season-card-img" src="${img}" alt="${a.title}" loading="lazy" />
+      ${inList ? '<span class="season-in-list">Na lista</span>' : ''}
+      <div class="season-card-body">
+        ${typeLabel ? `<span class="related-type">${typeLabel}</span>` : ''}
+        <div class="season-card-title">${a.title}</div>
+        ${score}
+      </div>
+    </div>`;
+}
+
+// Um relacionado pode ser anime (a adaptação) — nesse caso abre o modal de anime
+function openRelatedFromReading(card) {
+  const raw = JSON.parse(card.dataset.raw.replace(/&#39;/g, "'"));
+  closeReadingModal();
+  if (card.dataset.media === 'ANIME') {
+    const existing = myList.find(e => e.malId === raw.mal_id);
+    if (existing) openModal(raw.mal_id); else openModalFromSearch(raw);
+  } else {
+    openReadingModalFromSearch(raw);
+  }
+}
+
+function renderReadingRelatedRow(wrapEl, rowEl, items, showType) {
+  if (!items.length) { wrapEl.style.display = 'none'; return; }
+  rowEl.innerHTML = items.map(a => mangaRelatedCardHTML(a, showType ? a.relationLabel : '')).join('');
+  rowEl.querySelectorAll('.season-card').forEach(card =>
+    card.addEventListener('click', () => openRelatedFromReading(card)));
+  wrapEl.style.display = 'block';
+}
+
+async function loadReadingRelated(malId) {
+  const wrap    = document.getElementById('reading-related');
+  const loading = document.getElementById('reading-related-loading');
+  const fWrap   = document.getElementById('r-franchise-wrap');
+  const sWrap   = document.getElementById('r-similar-wrap');
+
+  fWrap.style.display = 'none';
+  sWrap.style.display = 'none';
+  wrap.style.display  = 'block';
+  loading.style.display = 'flex';
+
+  const atual = () => +document.getElementById('r-mal-id').value;
+
+  let data = mangaRelatedCache.get(malId);
+  if (!data) {
+    try {
+      const res = await fetch(`${API_BASE}/manga/related/${malId}`);
+      if (!res.ok) throw new Error('falhou');
+      data = await res.json();
+      mangaRelatedCache.set(malId, data);
+    } catch {
+      if (atual() === malId) wrap.style.display = 'none';
+      return;
+    }
+  }
+
+  if (atual() !== malId) return;
+
+  loading.style.display = 'none';
+  renderReadingRelatedRow(fWrap, document.getElementById('r-franchise'), data.franchise, true);
+  renderReadingRelatedRow(sWrap, document.getElementById('r-similar'), data.similar, false);
+  if (!data.franchise.length && !data.similar.length) wrap.style.display = 'none';
+}
+
+async function loadReading() {
+  try {
+    const res = await fetch(`${API_BASE}/reading`);
+    if (res.ok) {
+      myReading = await res.json();
+      readingCacheSet();
+    }
+  } catch {
+    // Servidor indisponível — usa cache local
+  }
+  renderReading();
+}
+
 // ── Auth ──────────────────────────────────────────────────────
 const authScreen  = document.getElementById('auth-screen');
 const formLogin   = document.getElementById('form-login');
@@ -1211,6 +1811,8 @@ document.getElementById('btn-logout').addEventListener('click', async () => {
   await fetch('/api/auth/logout', { method: 'POST' });
   myList = [];
   cacheSet([]);
+  myReading = [];
+  readingCacheSet();
   updateStats();
   renderDashboard();
   showAuthScreen();
@@ -1236,6 +1838,7 @@ async function loadUserData() {
   initGenrePills();
   loadSeasonCalendar();
   backfillSynopsisPt();
+  loadReading();
 }
 
 async function init() {

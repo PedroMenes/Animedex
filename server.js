@@ -37,6 +37,16 @@ async function initTurso() {
               updated_at INTEGER NOT NULL,
               PRIMARY KEY (user_id, mal_id)
             )`, args: [] },
+    // Tabela própria: no MAL os IDs de anime e mangá são espaços separados
+    // (mal_id 21 é One Piece como anime e Death Note como mangá), então
+    // guardar os dois em `lists` sobrescreveria um com o outro.
+    { sql: `CREATE TABLE IF NOT EXISTS reading (
+              user_id TEXT NOT NULL,
+              mal_id  INTEGER NOT NULL,
+              data    TEXT NOT NULL,
+              updated_at INTEGER NOT NULL,
+              PRIMARY KEY (user_id, mal_id)
+            )`, args: [] },
   ], 'write');
 }
 
@@ -138,6 +148,51 @@ async function dbDeleteEntry(userId, malId) {
   }
   const db   = readDB();
   db[userId] = (db[userId] || []).filter(e => e.malId !== malId);
+  writeDB(db);
+}
+
+// ── Leituras (mangá / light novel) ────────────────────────────
+// No fallback JSON, chave própria para não misturar com a lista de anime
+const readingKey = userId => `reading:${userId}`;
+
+async function dbGetReading(userId) {
+  if (turso) {
+    const r = await turso.execute({
+      sql: 'SELECT data FROM reading WHERE user_id=? ORDER BY updated_at DESC',
+      args: [userId],
+    });
+    return r.rows.map(row => JSON.parse(row.data));
+  }
+  return readDB()[readingKey(userId)] || [];
+}
+
+async function dbUpsertReading(userId, entry) {
+  if (turso) {
+    await turso.execute({
+      sql: `INSERT INTO reading (user_id, mal_id, data, updated_at) VALUES (?,?,?,?)
+            ON CONFLICT(user_id, mal_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at`,
+      args: [userId, entry.malId, JSON.stringify(entry), Date.now()],
+    });
+    return;
+  }
+  const db   = readDB();
+  const list = db[readingKey(userId)] || [];
+  const idx  = list.findIndex(e => e.malId === entry.malId);
+  if (idx >= 0) list[idx] = entry; else list.unshift(entry);
+  db[readingKey(userId)] = list;
+  writeDB(db);
+}
+
+async function dbDeleteReading(userId, malId) {
+  if (turso) {
+    await turso.execute({
+      sql: 'DELETE FROM reading WHERE user_id=? AND mal_id=?',
+      args: [userId, malId],
+    });
+    return;
+  }
+  const db = readDB();
+  db[readingKey(userId)] = (db[readingKey(userId)] || []).filter(e => e.malId !== malId);
   writeDB(db);
 }
 
@@ -550,6 +605,241 @@ app.delete('/api/list/:malId', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('[list delete]', err);
     res.status(500).json({ error: 'Erro ao remover entrada' });
+  }
+});
+
+// ── Reading API (mangá / light novel) ─────────────────────────
+
+app.get('/api/reading', requireAuth, async (req, res) => {
+  try {
+    res.json(await dbGetReading(req.session.userId));
+  } catch (err) {
+    console.error('[reading get]', err);
+    res.status(500).json({ error: 'Erro ao carregar leituras' });
+  }
+});
+
+app.post('/api/reading', requireAuth, async (req, res) => {
+  const entry = req.body;
+  if (!entry?.malId) return res.status(400).json({ error: 'malId required' });
+  try {
+    await dbUpsertReading(req.session.userId, entry);
+    const list = await dbGetReading(req.session.userId);
+    res.json({ ok: true, total: list.length });
+  } catch (err) {
+    console.error('[reading post]', err);
+    res.status(500).json({ error: 'Erro ao salvar leitura' });
+  }
+});
+
+app.delete('/api/reading/:malId', requireAuth, async (req, res) => {
+  const malId = +req.params.malId;
+  if (!malId) return res.status(400).json({ error: 'invalid malId' });
+  try {
+    await dbDeleteReading(req.session.userId, malId);
+    const list = await dbGetReading(req.session.userId);
+    res.json({ ok: true, total: list.length });
+  } catch (err) {
+    console.error('[reading delete]', err);
+    res.status(500).json({ error: 'Erro ao remover leitura' });
+  }
+});
+
+// Vai direto ao AniList: o fallback do proxy Jikan é fixo em type: ANIME
+// e devolveria animes numa busca de mangá.
+const ANILIST_MANGA_FIELDS = `idMal id type format title { romaji english } coverImage { large }
+        chapters volumes averageScore description(asHtml: false) genres status
+        startDate { year } staff(perPage: 4) { edges { role node { name { full } } } }`;
+
+function mapAnilistManga(media) {
+  return media
+    .filter(a => a && a.idMal)
+    .map(a => {
+      const author = a.staff?.edges?.find(e => /story/i.test(e.role || ''))?.node?.name?.full
+                  || a.staff?.edges?.[0]?.node?.name?.full || '';
+      return {
+        malId:    a.idMal,
+        title:    a.title.english || a.title.romaji,
+        image:    a.coverImage?.large || '',
+        format:   a.format || 'MANGA',
+        chapters: a.chapters || 0,
+        volumes:  a.volumes || 0,
+        score:    a.averageScore ? +(a.averageScore / 10).toFixed(2) : null,
+        synopsis: a.description ? a.description.replace(/<[^>]*>/g, '') : '',
+        genres:   a.genres || [],
+        author,
+        year:     a.startDate?.year || null,
+        status:   a.status,
+      };
+    });
+}
+
+// O GraphQL rejeita variável declarada e não usada, então cada modo declara
+// só o que realmente aplica.
+async function anilistManga({ search, genre, page = 1, perPage }) {
+  const decls = ['$page: Int', '$perPage: Int'];
+  const args  = [];
+  const vars  = { page, perPage };
+
+  if (search) {
+    decls.push('$search: String');
+    args.push('search: $search', 'sort: SEARCH_MATCH');
+    vars.search = search;
+  } else if (genre) {
+    decls.push('$genre: String');
+    args.push('genre: $genre', 'sort: SCORE_DESC');
+    vars.genre = genre;
+  } else {
+    args.push('sort: POPULARITY_DESC');
+  }
+
+  const gql = `query (${decls.join(', ')}) {
+    Page(page: $page, perPage: $perPage) {
+      pageInfo { hasNextPage }
+      media(type: MANGA, ${args.join(', ')}) {
+        ${ANILIST_MANGA_FIELDS}
+      }
+    }
+  }`;
+  const res = await fetch('https://graphql.anilist.co', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: gql, variables: vars }),
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`AniList ${res.status}`);
+  const json = await res.json();
+  if (json.errors) throw new Error(json.errors[0]?.message);
+  const p = json.data?.Page;
+  return { data: mapAnilistManga(p?.media || []), hasNext: p?.pageInfo?.hasNextPage ?? false };
+}
+
+app.get('/api/manga/search', async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.status(400).json({ error: 'q required' });
+  try {
+    const { data } = await anilistManga({ search: q, perPage: 24 });
+    res.json({ data });
+  } catch (err) {
+    console.warn('[manga search] falhou:', err.message);
+    res.status(502).json({ error: 'busca indisponível' });
+  }
+});
+
+const popularMangaCache = { data: null, expiresAt: 0 };
+
+app.get('/api/manga/popular', async (req, res) => {
+  if (popularMangaCache.data && popularMangaCache.expiresAt > Date.now()) {
+    return res.json({ data: popularMangaCache.data });
+  }
+  try {
+    const { data } = await anilistManga({ perPage: 18 });
+    popularMangaCache.data = data;
+    popularMangaCache.expiresAt = Date.now() + CACHE_TTL;
+    res.json({ data });
+  } catch (err) {
+    console.warn('[manga popular] falhou:', err.message);
+    res.status(502).json({ error: 'sugestões indisponíveis' });
+  }
+});
+
+app.get('/api/manga/genre', async (req, res) => {
+  const genre = String(req.query.genre || '').trim();
+  const page  = Math.max(1, parseInt(req.query.page || '1', 10) || 1);
+  if (!genre) return res.status(400).json({ error: 'genre required' });
+  try {
+    res.json(await anilistManga({ genre, page, perPage: 12 }));
+  } catch (err) {
+    console.warn('[manga genre] falhou:', err.message);
+    res.status(502).json({ error: 'recomendações indisponíveis' });
+  }
+});
+
+// Relações de um mangá: diferente do anime, aqui ADAPTATION é o item mais
+// valioso (a adaptação em anime), e o nó pode ser de qualquer mídia — por isso
+// o conjunto de campos cobre os dois e cada nó vai para o mapper certo.
+const MANGA_RELATION_LABELS = {
+  ADAPTATION:  'Adaptação',
+  SEQUEL:      'Sequência',
+  PREQUEL:     'Prequela',
+  SIDE_STORY:  'História paralela',
+  SPIN_OFF:    'Spin-off',
+  ALTERNATIVE: 'Versão alternativa',
+  PARENT:      'Obra principal',
+  SUMMARY:     'Resumo',
+};
+
+const ANILIST_ANY_FIELDS = `idMal id type format title { romaji english } coverImage { large }
+        episodes duration chapters volumes averageScore description(asHtml: false) genres status
+        startDate { year } studios(isMain: true) { nodes { name } }
+        staff(perPage: 4) { edges { role node { name { full } } } }`;
+
+function mapAnyNode(node) {
+  if (node.type === 'ANIME') {
+    const mapped = mapAnilistMedia([node])[0];
+    return mapped && { ...mapped, mediaType: 'ANIME' };
+  }
+  const mapped = mapAnilistManga([node])[0];
+  return mapped && { ...mapped, mediaType: 'MANGA' };
+}
+
+const mangaRelatedCache = new Map();
+
+async function anilistMangaRelated(idMal) {
+  const gql = `query ($idMal: Int) {
+    Media(idMal: $idMal, type: MANGA) {
+      relations { edges { relationType node { ${ANILIST_ANY_FIELDS} } } }
+      recommendations(sort: RATING_DESC, perPage: 10) {
+        nodes { mediaRecommendation { ${ANILIST_ANY_FIELDS} } }
+      }
+    }
+  }`;
+  const res = await fetch('https://graphql.anilist.co', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: gql, variables: { idMal } }),
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) throw new Error(`AniList ${res.status}`);
+  const json = await res.json();
+  if (json.errors) throw new Error(json.errors[0]?.message);
+
+  const media = json.data?.Media;
+  if (!media) return { franchise: [], similar: [] };
+
+  const franchise = (media.relations?.edges || [])
+    .filter(e => MANGA_RELATION_LABELS[e.relationType] && e.node?.idMal)
+    .map(e => {
+      const item = mapAnyNode(e.node);
+      if (!item) return null;
+      const label = e.relationType === 'ADAPTATION' && e.node.type === 'ANIME'
+        ? 'Adaptação em anime'
+        : MANGA_RELATION_LABELS[e.relationType];
+      return { ...item, relationLabel: label };
+    })
+    .filter(Boolean);
+
+  const similar = (media.recommendations?.nodes || [])
+    .map(n => n.mediaRecommendation)
+    .filter(n => n?.idMal)
+    .map(mapAnyNode)
+    .filter(Boolean);
+
+  return { franchise, similar };
+}
+
+app.get('/api/manga/related/:malId', async (req, res) => {
+  const malId = parseInt(req.params.malId, 10);
+  if (!Number.isInteger(malId) || malId <= 0) return res.status(400).json({ error: 'malId inválido' });
+
+  const hit = mangaRelatedCache.get(malId);
+  if (hit && hit.expiresAt > Date.now()) return res.json(hit.data);
+
+  try {
+    const data = await anilistMangaRelated(malId);
+    mangaRelatedCache.set(malId, { data, expiresAt: Date.now() + CACHE_TTL });
+    res.json(data);
+  } catch (err) {
+    console.warn('[manga related] falhou:', err.message);
+    res.status(502).json({ error: 'relacionados indisponíveis' });
   }
 });
 

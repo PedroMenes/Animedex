@@ -938,6 +938,12 @@ body {
   font-style: italic;
 }
 
+.reading-progress-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+
 .modal-related {
   margin-top: 26px;
   padding-top: 22px;

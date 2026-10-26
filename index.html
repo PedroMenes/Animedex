@@ -30,6 +30,10 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
           <span>Minha Lista</span>
         </a>
+        <a href="#" class="nav-item" data-view="reading">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          <span>Leituras</span>
+        </a>
         <a href="#" class="nav-item" data-view="stats">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
           <span>Estatísticas</span>
@@ -223,6 +227,68 @@
       </div>
     </section>
 
+    <!-- ══ LEITURAS ══ -->
+    <section id="view-reading" class="view">
+      <div class="page-header">
+        <h1>Leituras</h1>
+        <p class="subtitle">Mangás e light novels</p>
+      </div>
+
+      <div class="search-bar-wrap">
+        <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" id="reading-search-input" class="search-input" placeholder="Buscar mangá ou light novel para adicionar…" />
+        <div class="search-spinner" id="reading-search-spinner" style="display:none;"><div class="spinner"></div></div>
+      </div>
+
+      <div id="reading-list-pane">
+        <div class="list-controls">
+          <div class="filter-tabs" id="reading-status-tabs">
+            <button class="filter-tab active" data-rfilter="all">Todos <span class="tab-count" data-rcount="all">0</span></button>
+            <button class="filter-tab" data-rfilter="watching">Lendo <span class="tab-count" data-rcount="watching">0</span></button>
+            <button class="filter-tab" data-rfilter="completed">Lido <span class="tab-count" data-rcount="completed">0</span></button>
+            <button class="filter-tab" data-rfilter="plan_to_watch">Pretendo ler <span class="tab-count" data-rcount="plan_to_watch">0</span></button>
+            <button class="filter-tab" data-rfilter="on_hold">Em Pausa <span class="tab-count" data-rcount="on_hold">0</span></button>
+            <button class="filter-tab" data-rfilter="dropped">Dropado <span class="tab-count" data-rcount="dropped">0</span></button>
+          </div>
+          <div class="sort-wrap">
+            <label for="reading-sort-select">Ordenar por</label>
+            <select id="reading-sort-select" class="sort-select">
+              <option value="date_desc">Recentes primeiro</option>
+              <option value="date_asc">Antigos primeiro</option>
+              <option value="score_desc">Maior nota</option>
+              <option value="score_asc">Menor nota</option>
+              <option value="title_asc">A–Z</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="filter-tabs" id="reading-format-tabs">
+          <button class="filter-tab active" data-rformat="all">Todos os formatos</button>
+          <button class="filter-tab" data-rformat="MANGA">Mangá</button>
+          <button class="filter-tab" data-rformat="NOVEL">Light Novel</button>
+          <button class="filter-tab" data-rformat="ONE_SHOT">One-shot</button>
+        </div>
+
+        <div class="list-grid" id="reading-grid"></div>
+
+        <div class="dashboard-section reco-section">
+          <h2 class="section-title">Recomendações por gênero</h2>
+          <div class="genre-pills" id="reading-genre-pills"></div>
+          <div class="reco-area" id="reading-reco-area">
+            <div class="reco-placeholder">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+              <p>Selecione um gênero</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="reading-search-pane" style="display:none;">
+        <p class="search-hint" id="reading-search-hint">Sugestões populares</p>
+        <div class="search-results" id="reading-results"></div>
+      </div>
+    </section>
+
   </main>
 
   <!-- ══ MODAL ══ -->
@@ -328,6 +394,95 @@
         <div class="modal-related-section" id="related-similar-wrap" style="display:none;">
           <h4 class="modal-related-title">Parecidos</h4>
           <div class="season-row" id="related-similar"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ MODAL DE LEITURA ══ -->
+  <div class="modal-overlay" id="reading-overlay" style="display:none;">
+    <div class="modal">
+      <button class="modal-close" id="reading-close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+      <div class="modal-anime-info" id="reading-info"></div>
+      <form class="modal-form" id="reading-form">
+        <input type="hidden" id="r-mal-id" />
+
+        <div class="form-row">
+          <label class="form-label">Status</label>
+          <div class="status-options">
+            <label class="status-opt" style="--st-opt-color:var(--st-watching)"><input type="radio" name="rstatus" value="watching" /><span>Lendo</span></label>
+            <label class="status-opt" style="--st-opt-color:var(--st-completed)"><input type="radio" name="rstatus" value="completed" /><span>Lido</span></label>
+            <label class="status-opt" style="--st-opt-color:var(--st-planned)"><input type="radio" name="rstatus" value="plan_to_watch" /><span>Pretendo ler</span></label>
+            <label class="status-opt" style="--st-opt-color:var(--st-onhold)"><input type="radio" name="rstatus" value="on_hold" /><span>Em Pausa</span></label>
+            <label class="status-opt" style="--st-opt-color:var(--st-dropped)"><input type="radio" name="rstatus" value="dropped" /><span>Dropado</span></label>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label class="form-label">Nota geral <span class="form-label-hint">(calculada automaticamente)</span></label>
+          <div class="score-wrap">
+            <input type="range" id="r-user-score" min="0" max="10" step="1" value="0" class="score-slider" />
+            <span class="score-display" id="r-score-display">—</span>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label class="form-label">Avaliação detalhada</label>
+          <div class="cat-scores">
+            <div class="cat-score-row">
+              <span class="cat-label">História</span>
+              <input type="range" class="cat-slider" id="r-score-story" min="0" max="10" step="1" value="0" />
+              <span class="cat-val" id="r-val-story">—</span>
+            </div>
+            <div class="cat-score-row">
+              <span class="cat-label">Arte</span>
+              <input type="range" class="cat-slider" id="r-score-art" min="0" max="10" step="1" value="0" />
+              <span class="cat-val" id="r-val-art">—</span>
+            </div>
+            <div class="cat-score-row">
+              <span class="cat-label">Personagens</span>
+              <input type="range" class="cat-slider" id="r-score-characters" min="0" max="10" step="1" value="0" />
+              <span class="cat-val" id="r-val-characters">—</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label class="form-label">Progresso</label>
+          <div class="reading-progress-inputs">
+            <div class="ep-wrap">
+              <input type="number" id="r-chapters-read" min="0" value="0" class="ep-input" />
+              <span class="ep-total" id="r-chapters-total">capítulos</span>
+            </div>
+            <div class="ep-wrap">
+              <input type="number" id="r-volumes-read" min="0" value="0" class="ep-input" />
+              <span class="ep-total" id="r-volumes-total">volumes</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label class="form-label" for="r-notes">Review / Notas</label>
+          <textarea id="r-notes" class="form-textarea" placeholder="Escreva suas impressões sobre a obra..."></textarea>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn-danger" id="r-btn-remove" style="display:none;">Remover</button>
+          <button type="submit" class="btn-primary" id="r-btn-save">Salvar</button>
+        </div>
+      </form>
+
+      <div class="modal-related" id="reading-related" style="display:none;">
+        <div class="reco-loading" id="reading-related-loading"><div class="spinner"></div> Carregando…</div>
+        <div class="modal-related-section" id="r-franchise-wrap" style="display:none;">
+          <h4 class="modal-related-title">Franquia</h4>
+          <div class="season-row" id="r-franchise"></div>
+        </div>
+        <div class="modal-related-section" id="r-similar-wrap" style="display:none;">
+          <h4 class="modal-related-title">Parecidos</h4>
+          <div class="season-row" id="r-similar"></div>
         </div>
       </div>
     </div>
