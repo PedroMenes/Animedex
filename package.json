@@ -9,7 +9,7 @@
   "dependencies": {
     "@libsql/client": "^0.17.4",
     "bcryptjs": "^3.0.3",
-    "express": "^4.19.2",
-    "express-session": "^1.19.0"
+    "cookie-session": "^2.1.1",
+    "express": "^4.19.2"
   }
 }

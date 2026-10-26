@@ -2,7 +2,7 @@ const express    = require('express');
 const fs         = require('fs');
 const path       = require('path');
 const bcrypt     = require('bcryptjs');
-const session    = require('express-session');
+const session    = require('cookie-session');
 const crypto     = require('crypto');
 const { createClient } = require('@libsql/client');
 
@@ -207,11 +207,16 @@ function getSessionSecret() {
 
 // ── Middleware ────────────────────────────────────────────────
 app.use(express.json());
+// Sessão no próprio cookie (assinado): o store em memória do express-session
+// morria a cada restart/deploy, deslogando todo mundo. Aqui só trafegam
+// userId e username, então cabe de sobra no cookie e não há consulta ao banco
+// por requisição — o express.static abaixo é servido por este mesmo middleware.
 app.use(session({
-  secret: getSessionSecret(),
-  resave: false,
-  saveUninitialized: false,
-  cookie: { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 },
+  name: 'animedex.sid',
+  keys: [getSessionSecret()],
+  httpOnly: true,
+  sameSite: 'lax',
+  maxAge: 7 * 24 * 60 * 60 * 1000,
 }));
 app.use(express.static(__dirname));
 
@@ -275,7 +280,8 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 app.post('/api/auth/logout', (req, res) => {
-  req.session.destroy(() => res.json({ ok: true }));
+  req.session = null;
+  res.json({ ok: true });
 });
 
 // ── Jikan proxy com cache e retry ────────────────────────────
