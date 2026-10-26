@@ -199,40 +199,62 @@ async function translateText(text) {
   return (await res.json()).text;
 }
 
-async function getSynopsisPt(malId, original) {
+// Anime e mangá têm espaços de id separados no MAL, então o cache precisa do
+// tipo de mídia: sem isso o mangá 21 (Death Note) herdaria a tradução do
+// anime 21 (One Piece).
+function synopsisKey(media, malId) {
+  return `${media}:${malId}`;
+}
+
+async function getSynopsisPt(key, original) {
   const text = cleanSynopsis(original);
   if (!text) return '';
-  if (synopsisPtCache.has(malId)) return synopsisPtCache.get(malId);
+  if (synopsisPtCache.has(key)) return synopsisPtCache.get(key);
   const pt = await translateText(text);
-  synopsisPtCache.set(malId, pt);
+  synopsisPtCache.set(key, pt);
   return pt;
 }
 
 function entrySynopsis(entry) {
-  return entry.synopsisPt || synopsisPtCache.get(entry.malId) || cleanSynopsis(entry.synopsis);
+  return entry.synopsisPt
+      || synopsisPtCache.get(synopsisKey('anime', entry.malId))
+      || cleanSynopsis(entry.synopsis);
 }
 
-// Traduz em segundo plano as entradas da lista que ainda não têm sinopse em pt-BR
+function readingSynopsis(entry) {
+  return entry.synopsisPt
+      || synopsisPtCache.get(synopsisKey('manga', entry.malId))
+      || cleanSynopsis(entry.synopsis);
+}
+
+// Traduz em segundo plano o que ainda não tem sinopse em pt-BR. As duas listas
+// compartilham a mesma fila para não disparar chamadas em paralelo à tradução.
 let backfillRunning = false;
+
+async function backfillInto(list, media, saveCache, saveApi) {
+  const pending = list.filter(e => !e.synopsisPt && cleanSynopsis(e.synopsis));
+  for (const entry of pending) {
+    let pt;
+    try { pt = await getSynopsisPt(synopsisKey(media, entry.malId), entry.synopsis); }
+    catch { break; }
+    entry.synopsisPt = pt;
+    saveCache();
+    saveApi(entry).catch(() => {});
+    await new Promise(r => setTimeout(r, 300));
+  }
+  if (!pending.length) return;
+  const activeView = document.querySelector('.view.active')?.id;
+  if (activeView === 'view-dashboard') renderDashboard();
+  if (activeView === 'view-list')      renderList();
+  if (activeView === 'view-reading')   renderReading();
+}
+
 async function backfillSynopsisPt() {
   if (backfillRunning) return;
   backfillRunning = true;
   try {
-    const pending = myList.filter(e => !e.synopsisPt && cleanSynopsis(e.synopsis));
-    for (const entry of pending) {
-      let pt;
-      try { pt = await getSynopsisPt(entry.malId, entry.synopsis); }
-      catch { break; }
-      entry.synopsisPt = pt;
-      cacheSet(myList);
-      apiSave(entry).catch(() => {});
-      await new Promise(r => setTimeout(r, 300));
-    }
-    if (pending.length) {
-      const activeView = document.querySelector('.view.active')?.id;
-      if (activeView === 'view-dashboard') renderDashboard();
-      if (activeView === 'view-list') renderList();
-    }
+    await backfillInto(myList,    'anime', () => cacheSet(myList), apiSave);
+    await backfillInto(myReading, 'manga', readingCacheSet,        apiReadingSave);
   } finally {
     backfillRunning = false;
   }
@@ -618,7 +640,7 @@ function populateModal(data, entry) {
 
   const sub = [data.studio, data.year].filter(Boolean).join(' · ');
   const original = cleanSynopsis(data.synopsis);
-  const knownPt  = entry?.synopsisPt || synopsisPtCache.get(data.mal_id);
+  const knownPt  = entry?.synopsisPt || synopsisPtCache.get(synopsisKey('anime', data.mal_id));
   const synopsis = knownPt || original;
   const infoEl = document.getElementById('modal-anime-info');
   infoEl.innerHTML = `
@@ -633,7 +655,7 @@ function populateModal(data, entry) {
     <img class="modal-cover" src="${data.image || ''}" alt="${data.title}" />`;
 
   if (original && !knownPt) {
-    getSynopsisPt(data.mal_id, original)
+    getSynopsisPt(synopsisKey('anime', data.mal_id), original)
       .then(pt => {
         if (+document.getElementById('form-mal-id').value !== data.mal_id) return;
         const p = infoEl.querySelector('.modal-synopsis');
@@ -759,7 +781,7 @@ modalForm.addEventListener('submit', e => {
   const idx = myList.findIndex(e => e.malId === malId);
   const entry = {
     malId, title, image, synopsis, genres, duration, studio, year,
-    synopsisPt: synopsisPtCache.get(malId) || prevEntry?.synopsisPt || '',
+    synopsisPt: synopsisPtCache.get(synopsisKey('anime', malId)) || prevEntry?.synopsisPt || '',
     totalEpisodes: episodes,
     malScore,
     status, userScore, epWatched, notes,
@@ -1184,7 +1206,7 @@ function readingCardHTML(entry) {
         <span class="status-badge">${s.label}</span>
         ${rating}
         <img class="anime-card-cover" src="${entry.image}" alt="${entry.title}" loading="lazy" />
-        ${buildOverlay(entry.synopsis, entry.notes)}
+        ${buildOverlay(readingSynopsis(entry), entry.notes)}
       </div>
       <div class="anime-card-body">
         <div class="anime-card-title">${entry.title}</div>
@@ -1243,7 +1265,34 @@ function renderReading() {
     return;
   }
 
-  grid.innerHTML = items.map(readingCardHTML).join('');
+  // Agrupa em faixas por gênero. Uma obra com vários gêneros aparece em cada
+  // um deles — é o que torna a navegação por gênero útil.
+  const SEM_GENERO = '\u0000outros';
+  const porGenero = new Map();
+  items.forEach(e => {
+    const gs = (e.genres || []).length ? e.genres : [SEM_GENERO];
+    gs.forEach(g => {
+      if (!porGenero.has(g)) porGenero.set(g, []);
+      porGenero.get(g).push(e);
+    });
+  });
+
+  // Gêneros mais lidos primeiro; "Outros" sempre no fim
+  const grupos = [...porGenero.entries()].sort((a, b) => {
+    if (a[0] === SEM_GENERO) return 1;
+    if (b[0] === SEM_GENERO) return -1;
+    return b[1].length - a[1].length || a[0].localeCompare(b[0]);
+  });
+
+  grid.innerHTML = grupos.map(([genero, lista]) => {
+    const label = genero === SEM_GENERO ? 'Outros' : genreInfo(genero).label;
+    return `
+      <div class="dashboard-section">
+        <h2 class="section-title">${label} <span class="section-count">${lista.length}</span></h2>
+        <div class="anime-row">${lista.map(readingCardHTML).join('')}</div>
+      </div>`;
+  }).join('');
+
   grid.querySelectorAll('.anime-card').forEach(c =>
     c.addEventListener('click', () => openReadingModal(+c.dataset.malId)));
 }
@@ -1386,17 +1435,32 @@ function populateReadingModal(data, entry) {
 
   const sub = [FORMAT_LABELS[data.format] || data.format, data.author, data.year]
     .filter(Boolean).join(' · ');
-  const synopsis = cleanSynopsis(data.synopsis);
+  const original = cleanSynopsis(data.synopsis);
+  const knownPt  = entry?.synopsisPt || synopsisPtCache.get(synopsisKey('manga', data.malId));
+  const synopsis = knownPt || original;
 
-  document.getElementById('reading-info').innerHTML = `
+  const infoEl = document.getElementById('reading-info');
+  infoEl.innerHTML = `
     <div class="modal-anime-details">
       <h3>${data.title}</h3>
       ${sub ? `<div class="modal-anime-sub">${sub}</div>` : ''}
       ${data.score ? `<div class="mal-score">${STAR_SVG}${data.score} no AniList</div>` : ''}
       <div class="genre-tags">${genreTags(data.genres, 4)}</div>
       ${synopsis ? `<p class="modal-synopsis">${synopsis}</p>` : ''}
+      ${original && !knownPt ? '<span class="modal-synopsis-hint">Traduzindo…</span>' : ''}
     </div>
     <img class="modal-cover" src="${data.image || ''}" alt="${data.title}" />`;
+
+  if (original && !knownPt) {
+    getSynopsisPt(synopsisKey('manga', data.malId), original)
+      .then(pt => {
+        if (+document.getElementById('r-mal-id').value !== data.malId) return;
+        const p = infoEl.querySelector('.modal-synopsis');
+        if (p) p.textContent = pt;
+      })
+      .catch(() => {})
+      .finally(() => infoEl.querySelector('.modal-synopsis-hint')?.remove());
+  }
 
   document.getElementById('r-chapters-total').textContent =
     data.totalChapters || data.chapters ? `/ ${data.totalChapters || data.chapters} capítulos` : 'capítulos';
@@ -1460,6 +1524,8 @@ readingForm.addEventListener('submit', e => {
     image:  data.image,
     format: data.format || 'MANGA',
     synopsis: data.synopsis || '',
+    synopsisPt: synopsisPtCache.get(synopsisKey('manga', malId))
+             || (idx >= 0 ? myReading[idx].synopsisPt : '') || '',
     genres: data.genres || [],
     author: data.author || '',
     year:   data.year || null,
@@ -1719,6 +1785,9 @@ async function loadReading() {
     // Servidor indisponível — usa cache local
   }
   renderReading();
+  // Só agora as duas listas estão carregadas, então a fila de tradução
+  // consegue cobrir anime e leituras numa passada só.
+  backfillSynopsisPt();
 }
 
 // ── Auth ──────────────────────────────────────────────────────
@@ -1837,7 +1906,6 @@ async function loadUserData() {
   renderDashboard();
   initGenrePills();
   loadSeasonCalendar();
-  backfillSynopsisPt();
   loadReading();
 }
 

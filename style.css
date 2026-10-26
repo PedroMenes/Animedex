@@ -938,6 +938,8 @@ body {
   font-style: italic;
 }
 
+.reading-rows { display: grid; gap: 26px; }
+
 .reading-progress-inputs {
   display: flex;
   flex-wrap: wrap;
