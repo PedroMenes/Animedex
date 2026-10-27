@@ -1172,7 +1172,36 @@ const READING_STATUS_LABELS = {
   dropped:       'Dropado',
 };
 
-const FORMAT_LABELS = { MANGA: 'Mangá', NOVEL: 'Light Novel', ONE_SHOT: 'One-shot' };
+const FORMAT_LABELS = {
+  MANGA: 'Mangá', MANHWA: 'Manhwa', MANHUA: 'Manhua',
+  NOVEL: 'Light Novel', ONE_SHOT: 'One-shot',
+};
+
+// Qual país vai no filtro do AniList para cada categoria. O AniList aceita um
+// CountryCode por consulta, então Manhua cobre CN (Taiwan fica de fora da
+// busca, mas uma obra TW que chegue por outra via ainda é rotulada Manhua).
+const KIND_COUNTRY = { MANGA: 'JP', MANHWA: 'KR', MANHUA: 'CN' };
+const KIND_BY_COUNTRY = { KR: 'MANHWA', CN: 'MANHUA', TW: 'MANHUA' };
+
+// Leituras salvas antes da separação por origem só têm `format`, então a
+// categoria é derivada na leitura — nenhuma migração no banco.
+function readingKind(e) {
+  if (e.kind) return e.kind;
+  if (e.format === 'NOVEL' || e.format === 'ONE_SHOT') return e.format;
+  return KIND_BY_COUNTRY[e.country] || 'MANGA';
+}
+
+const kindLabel = e => FORMAT_LABELS[readingKind(e)] || e.format;
+
+// A aba de categoria ativa também estreita a descoberta (sugestões populares e
+// recomendações por gênero), senão as categorias novas seriam só um rótulo:
+// manhwa e manhua nunca apareceriam num ranking global de popularidade.
+function originQuery() {
+  if (readingFormat === 'all') return '';
+  const country = KIND_COUNTRY[readingFormat];
+  const format  = country ? 'MANGA' : readingFormat;
+  return `&format=${format}${country ? `&country=${country}` : ''}`;
+}
 
 function readingStatusMeta(status) {
   const base = statusMeta(status);
@@ -1244,7 +1273,7 @@ function renderReading() {
 
   let items = myReading.filter(e =>
     (readingFilter === 'all' || e.status === readingFilter) &&
-    (readingFormat === 'all' || (e.format || 'MANGA') === readingFormat));
+    (readingFormat === 'all' || readingKind(e) === readingFormat));
 
   items.sort((a, b) => {
     if (readingSort === 'date_desc')  return b.addedAt - a.addedAt;
@@ -1313,6 +1342,13 @@ document.querySelectorAll('#reading-format-tabs .filter-tab').forEach(btn => {
     btn.classList.add('active');
     readingFormat = btn.dataset.rformat;
     renderReading();
+    // A categoria também estreita a descoberta, então o que já estava na tela
+    // pertence à categoria anterior e precisa ser recarregado
+    if (activeMangaGenre) {
+      mangaRecoPage  = 1;
+      mangaRecoShown = new Set();
+      fetchMangaReco(false);
+    }
   });
 });
 
@@ -1329,7 +1365,8 @@ const readingListPane   = document.getElementById('reading-list-pane');
 const readingSearchPane = document.getElementById('reading-search-pane');
 
 let readingSearchTimer;
-let popularMangaCache = null;
+// Uma lista de populares por categoria — as abas estreitam a consulta
+let popularMangaCache = new Map();
 
 function showReadingPane(which) {
   readingListPane.style.display   = which === 'list' ? 'block' : 'none';
@@ -1361,13 +1398,15 @@ async function runReadingSearch(q) {
 async function showPopularManga() {
   showReadingPane('search');
   document.getElementById('reading-search-hint').textContent = 'Sugestões populares';
-  if (popularMangaCache) { renderReadingResults(popularMangaCache); return; }
+  const cacheKey = readingFormat;
+  if (popularMangaCache.has(cacheKey)) { renderReadingResults(popularMangaCache.get(cacheKey)); return; }
   readingSpinner.style.display = 'flex';
   try {
-    const res = await fetch(`${API_BASE}/manga/popular`);
+    const res = await fetch(`${API_BASE}/manga/popular?_=1${originQuery()}`);
     if (!res.ok) throw new Error('falhou');
-    popularMangaCache = (await res.json()).data;
-    renderReadingResults(popularMangaCache);
+    const data = (await res.json()).data;
+    popularMangaCache.set(cacheKey, data);
+    renderReadingResults(data);
   } catch {
     showReadingPane('list');
   } finally {
@@ -1383,7 +1422,7 @@ function renderReadingResults(results) {
 
   readingResults.innerHTML = results.map(a => {
     const inList = myReading.some(e => e.malId === a.malId);
-    const meta   = [FORMAT_LABELS[a.format] || a.format, a.author, a.year,
+    const meta   = [kindLabel(a), a.author, a.year,
                     a.chapters ? `${a.chapters} cap` : null].filter(Boolean).join(' · ');
     const score  = a.score ? `<span class="result-score">${STAR_SVG}${a.score}</span>` : '';
     return `
@@ -1433,7 +1472,7 @@ function populateReadingModal(data, entry) {
   document.getElementById('r-mal-id').value = data.malId;
   readingOverlay.dataset.raw = JSON.stringify(data);
 
-  const sub = [FORMAT_LABELS[data.format] || data.format, data.author, data.year]
+  const sub = [kindLabel(data), data.author, data.year]
     .filter(Boolean).join(' · ');
   const original = cleanSynopsis(data.synopsis);
   const knownPt  = entry?.synopsisPt || synopsisPtCache.get(synopsisKey('manga', data.malId));
@@ -1523,6 +1562,8 @@ readingForm.addEventListener('submit', e => {
     title:  data.title,
     image:  data.image,
     format: data.format || 'MANGA',
+    kind:    readingKind(data),
+    country: data.country || null,
     synopsis: data.synopsis || '',
     synopsisPt: synopsisPtCache.get(synopsisKey('manga', malId))
              || (idx >= 0 ? myReading[idx].synopsisPt : '') || '',
@@ -1604,7 +1645,7 @@ function initMangaGenrePills() {
 
 function mangaRecoCardHTML(a) {
   const inList = myReading.some(e => e.malId === a.malId);
-  const sub    = [FORMAT_LABELS[a.format] || a.format, a.year].filter(Boolean).join(' · ');
+  const sub    = [kindLabel(a), a.year].filter(Boolean).join(' · ');
   const rating = a.score ? `<span class="rating-badge">${STAR_SVG}${a.score}</span>` : '';
   return `
     <div class="reco-card" data-mal-id="${a.malId}">
@@ -1633,15 +1674,18 @@ async function fetchMangaReco(append) {
     if (btn) { btn.disabled = true; btn.textContent = 'Carregando…'; }
   }
 
-  const genre = activeMangaGenre;
+  // Trocar de gênero OU de categoria durante a requisição invalida a resposta
+  const genre  = activeMangaGenre;
+  const origin = originQuery();
+  const stale  = () => genre !== activeMangaGenre || origin !== originQuery();
   try {
-    const res = await fetch(`${API_BASE}/manga/genre?genre=${encodeURIComponent(genre)}&page=${mangaRecoPage}`);
+    const res = await fetch(`${API_BASE}/manga/genre?genre=${encodeURIComponent(genre)}&page=${mangaRecoPage}${origin}`);
     if (!res.ok) throw new Error('falhou');
     const json = await res.json();
-    if (genre !== activeMangaGenre) return;   // o usuário já trocou de gênero
+    if (stale()) return;
     renderMangaReco(json.data, json.hasNext, append);
   } catch {
-    if (genre !== activeMangaGenre) return;
+    if (stale()) return;
     if (!append) area.innerHTML = '<div class="reco-placeholder"><p>Erro ao carregar. Tente novamente.</p></div>';
     else {
       const btn = document.getElementById('btn-manga-reco-more');

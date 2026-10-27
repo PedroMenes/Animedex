@@ -653,21 +653,38 @@ app.delete('/api/reading/:malId', requireAuth, async (req, res) => {
 
 // Vai direto ao AniList: o fallback do proxy Jikan é fixo em type: ANIME
 // e devolveria animes numa busca de mangá.
-const ANILIST_MANGA_FIELDS = `idMal id type format title { romaji english } coverImage { large }
+const ANILIST_MANGA_FIELDS = `idMal id type format countryOfOrigin title { romaji english } coverImage { large }
         chapters volumes averageScore description(asHtml: false) genres status
         startDate { year } staff(perPage: 4) { edges { role node { name { full } } } }`;
 
+// No AniList manhwa e manhua não têm formato próprio: tudo vem como
+// `format: MANGA` e só o countryOfOrigin distingue a origem.
+const KIND_BY_COUNTRY = { KR: 'MANHWA', CN: 'MANHUA', TW: 'MANHUA' };
+
+// A origem só vale para as obras em quadrinhos; light novel e one-shot
+// continuam identificados pelo formato, independente do país.
+function mangaKind(a) {
+  if (a.format === 'NOVEL' || a.format === 'ONE_SHOT') return a.format;
+  return KIND_BY_COUNTRY[a.countryOfOrigin] || 'MANGA';
+}
+
 function mapAnilistManga(media) {
   return media
-    .filter(a => a && a.idMal)
+    .filter(a => a && (a.idMal || a.id))
     .map(a => {
       const author = a.staff?.edges?.find(e => /story/i.test(e.role || ''))?.node?.name?.full
                   || a.staff?.edges?.[0]?.node?.name?.full || '';
       return {
-        malId:    a.idMal,
+        // Metade do manhua popular não existe no MyAnimeList (Martial Peak,
+        // Tales of Demons and Gods...). Para essas obras usamos o id do
+        // AniList negativado: os ids do MAL são sempre positivos, então os
+        // dois espaços nunca colidem na tabela `reading`.
+        malId:    a.idMal || -a.id,
         title:    a.title.english || a.title.romaji,
         image:    a.coverImage?.large || '',
         format:   a.format || 'MANGA',
+        kind:     mangaKind(a),
+        country:  a.countryOfOrigin || null,
         chapters: a.chapters || 0,
         volumes:  a.volumes || 0,
         score:    a.averageScore ? +(a.averageScore / 10).toFixed(2) : null,
@@ -682,10 +699,22 @@ function mapAnilistManga(media) {
 
 // O GraphQL rejeita variável declarada e não usada, então cada modo declara
 // só o que realmente aplica.
-async function anilistManga({ search, genre, page = 1, perPage }) {
+async function anilistManga({ search, genre, country, format, page = 1, perPage }) {
   const decls = ['$page: Int', '$perPage: Int'];
   const args  = [];
   const vars  = { page, perPage };
+
+  if (country) {
+    decls.push('$country: CountryCode');
+    args.push('countryOfOrigin: $country');
+    vars.country = country;
+  }
+
+  if (format) {
+    decls.push('$format: MediaFormat');
+    args.push('format: $format');
+    vars.format = format;
+  }
 
   if (search) {
     decls.push('$search: String');
@@ -731,16 +760,29 @@ app.get('/api/manga/search', async (req, res) => {
   }
 });
 
-const popularMangaCache = { data: null, expiresAt: 0 };
+// O AniList aceita um único CountryCode por consulta, então a lista é fechada
+// e qualquer outro valor vira "sem filtro" em vez de erro de GraphQL.
+const COUNTRIES = ['JP', 'KR', 'CN', 'TW'];
+const FORMATS   = ['MANGA', 'NOVEL', 'ONE_SHOT'];
+const pickEnum = (allowed, raw) => {
+  const v = String(raw || '').trim().toUpperCase();
+  return allowed.includes(v) ? v : null;
+};
+const reqOrigin = req => ({
+  country: pickEnum(COUNTRIES, req.query.country),
+  format:  pickEnum(FORMATS,   req.query.format),
+});
+
+const popularMangaCache = new Map();
 
 app.get('/api/manga/popular', async (req, res) => {
-  if (popularMangaCache.data && popularMangaCache.expiresAt > Date.now()) {
-    return res.json({ data: popularMangaCache.data });
-  }
+  const { country, format } = reqOrigin(req);
+  const key = `${country}|${format}`;
+  const hit = popularMangaCache.get(key);
+  if (hit && hit.expiresAt > Date.now()) return res.json({ data: hit.data });
   try {
-    const { data } = await anilistManga({ perPage: 18 });
-    popularMangaCache.data = data;
-    popularMangaCache.expiresAt = Date.now() + CACHE_TTL;
+    const { data } = await anilistManga({ country, format, perPage: 18 });
+    popularMangaCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL });
     res.json({ data });
   } catch (err) {
     console.warn('[manga popular] falhou:', err.message);
@@ -753,7 +795,7 @@ app.get('/api/manga/genre', async (req, res) => {
   const page  = Math.max(1, parseInt(req.query.page || '1', 10) || 1);
   if (!genre) return res.status(400).json({ error: 'genre required' });
   try {
-    res.json(await anilistManga({ genre, page, perPage: 12 }));
+    res.json(await anilistManga({ genre, ...reqOrigin(req), page, perPage: 12 }));
   } catch (err) {
     console.warn('[manga genre] falhou:', err.message);
     res.status(502).json({ error: 'recomendações indisponíveis' });
@@ -774,7 +816,7 @@ const MANGA_RELATION_LABELS = {
   SUMMARY:     'Resumo',
 };
 
-const ANILIST_ANY_FIELDS = `idMal id type format title { romaji english } coverImage { large }
+const ANILIST_ANY_FIELDS = `idMal id type format countryOfOrigin title { romaji english } coverImage { large }
         episodes duration chapters volumes averageScore description(asHtml: false) genres status
         startDate { year } studios(isMain: true) { nodes { name } }
         staff(perPage: 4) { edges { role node { name { full } } } }`;
@@ -790,9 +832,16 @@ function mapAnyNode(node) {
 
 const mangaRelatedCache = new Map();
 
-async function anilistMangaRelated(idMal) {
-  const gql = `query ($idMal: Int) {
-    Media(idMal: $idMal, type: MANGA) {
+// Nó de anime sem idMal é inútil aqui (abrir o modal de anime consulta o MAL
+// por id); nó de mangá sobrevive pelo id do AniList negativado.
+const usableNode = n => !!n && (n.type === 'MANGA' ? !!(n.idMal || n.id) : !!n.idMal);
+
+async function anilistMangaRelated(malId) {
+  // malId negativo é um id do AniList (obra ausente do MAL), então a busca
+  // muda de campo — ver o mapeamento em mapAnilistManga.
+  const byAnilistId = malId < 0;
+  const gql = `query ($id: Int) {
+    Media(${byAnilistId ? 'id: $id' : 'idMal: $id'}, type: MANGA) {
       relations { edges { relationType node { ${ANILIST_ANY_FIELDS} } } }
       recommendations(sort: RATING_DESC, perPage: 10) {
         nodes { mediaRecommendation { ${ANILIST_ANY_FIELDS} } }
@@ -801,7 +850,7 @@ async function anilistMangaRelated(idMal) {
   }`;
   const res = await fetch('https://graphql.anilist.co', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: gql, variables: { idMal } }),
+    body: JSON.stringify({ query: gql, variables: { id: Math.abs(malId) } }),
     signal: AbortSignal.timeout(12000),
   });
   if (!res.ok) throw new Error(`AniList ${res.status}`);
@@ -812,7 +861,7 @@ async function anilistMangaRelated(idMal) {
   if (!media) return { franchise: [], similar: [] };
 
   const franchise = (media.relations?.edges || [])
-    .filter(e => MANGA_RELATION_LABELS[e.relationType] && e.node?.idMal)
+    .filter(e => MANGA_RELATION_LABELS[e.relationType] && usableNode(e.node))
     .map(e => {
       const item = mapAnyNode(e.node);
       if (!item) return null;
@@ -825,7 +874,7 @@ async function anilistMangaRelated(idMal) {
 
   const similar = (media.recommendations?.nodes || [])
     .map(n => n.mediaRecommendation)
-    .filter(n => n?.idMal)
+    .filter(usableNode)
     .map(mapAnyNode)
     .filter(Boolean);
 
@@ -834,7 +883,7 @@ async function anilistMangaRelated(idMal) {
 
 app.get('/api/manga/related/:malId', async (req, res) => {
   const malId = parseInt(req.params.malId, 10);
-  if (!Number.isInteger(malId) || malId <= 0) return res.status(400).json({ error: 'malId inválido' });
+  if (!Number.isInteger(malId) || malId === 0) return res.status(400).json({ error: 'malId inválido' });
 
   const hit = mangaRelatedCache.get(malId);
   if (hit && hit.expiresAt > Date.now()) return res.json(hit.data);
